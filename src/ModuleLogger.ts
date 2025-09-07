@@ -11,40 +11,36 @@ export class ModuleLogger {
     this.standardLogger = standardLogger;
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  public info(message: Error | string | any, context?: Span): void {
-    this.display("info", message, SeverityNumber.INFO, context);
+  public info(message: string, context?: Span): void {
+    this.display("info", message, SeverityNumber.INFO, null, context);
   }
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  public warn(message: Error | string | any, context?: Span): void {
-    this.display("warn", message, SeverityNumber.WARN, context);
+
+  public warn(message: string, context?: Span): void {
+    this.display("warn", message, SeverityNumber.WARN, null, context);
   }
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  public error(message: Error | string | any, context?: Span): void {
-    this.display("error", message, SeverityNumber.ERROR, context);
+
+  public error(message: string, error?: Error, context?: Span): void {
+    this.display("error", message, SeverityNumber.ERROR, error, context);
   }
 
   private display(
     level: string,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    message: string | Error | any,
+    message: string,
     severityNumber = SeverityNumber.INFO,
+    error?: Error | null,
     context?: Span
   ): void {
-    let formattedMessage = "";
+    let formattedMessage = message;
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const attributes: Record<string, any> = { "log.type": "custom" };
 
-    if (typeof message === "string") {
-      formattedMessage = message;
-    } else if (message instanceof Error) {
-      formattedMessage = message.message;
-      attributes["exception.type"] = message.name;
-      attributes["exception.message"] = message.message;
-      attributes["exception.stacktrace"] = message.stack;
-      console.log((message as Error).stack);
-    } else if (typeof message === "object") {
-      formattedMessage = JSON.stringify(message);
+    formattedMessage = message;
+    if (error) {
+      attributes["exception.type"] = error.name;
+      attributes["exception.message"] = error.message;
+      attributes["exception.stacktrace"] = error.stack;
+      formattedMessage += "\n" + error.stack;
     }
 
     if (context) {
