@@ -1,6 +1,10 @@
 {
   "name": "@devopsplaybook.io/otel-utils",
+<<<<<<< Updated upstream
   "version": "1.0.2",
+=======
+  "version": "1.0.4",
+>>>>>>> Stashed changes
   "description": "Utility to simplify integration with Open Telemetry",
   "keywords": [
     "Open",
