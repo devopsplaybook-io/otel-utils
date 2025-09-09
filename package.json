@@ -1,6 +1,6 @@
 {
   "name": "@devopsplaybook.io/otel-utils",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "Utility to simplify integration with Open Telemetry",
   "keywords": [
     "Open",
@@ -21,7 +21,7 @@
   "dependencies": {
     "@opentelemetry/api": "^1.9.0",
     "@opentelemetry/api-logs": "^0.204.0",
-    "@opentelemetry/auto-instrumentations-node": "^0.62.2",
+    "@opentelemetry/auto-instrumentations-node": "^0.63.0",
     "@opentelemetry/exporter-logs-otlp-http": "^0.204.0",
     "@opentelemetry/exporter-trace-otlp-http": "^0.204.0",
     "@opentelemetry/id-generator-aws-xray": "^2.0.1",
@@ -33,11 +33,11 @@
     "@opentelemetry/semantic-conventions": "^1.37.0"
   },
   "devDependencies": {
-    "@eslint/js": "^9.34.0",
+    "@eslint/js": "^9.35.0",
     "@types/node": "^24.3.1",
     "@types/sqlite3": "^5.1.0",
     "ts-node": "^10.9.2",
-    "typescript-eslint": "^8.42.0",
+    "typescript-eslint": "^8.43.0",
     "typescript": "^5.9.2"
   },
   "publishConfig": {
