@@ -1,6 +1,6 @@
 {
   "name": "@devopsplaybook.io/otel-utils",
-  "version": "1.0.14",
+  "version": "1.0.15",
   "description": "Utility to simplify integration with Open Telemetry",
   "keywords": [
     "Open",
