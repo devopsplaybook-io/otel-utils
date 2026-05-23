@@ -28,14 +28,13 @@ export class ModuleLogger {
     message: string,
     severityNumber = SeverityNumber.INFO,
     error?: Error | null,
-    context?: Span
+    context?: Span,
   ): void {
     let formattedMessage = message;
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const attributes: Record<string, any> = { "log.type": "custom" };
 
-    formattedMessage = message;
     if (error) {
       attributes["exception.type"] = error.name;
       attributes["exception.message"] = error.message;

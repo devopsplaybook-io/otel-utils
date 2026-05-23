@@ -1,16 +1,16 @@
-import { Counter, Histogram, Meter, ObservableGauge } from "@opentelemetry/api";
+import {
+  Counter,
+  Histogram,
+  Meter,
+  ObservableGauge,
+  UpDownCounter,
+} from "@opentelemetry/api";
 import { OTLPMetricExporter } from "@opentelemetry/exporter-metrics-otlp-http";
-import { resourceFromAttributes } from "@opentelemetry/resources";
+import { createOTelResource } from "./utils/createResource";
 import {
   MeterProvider,
   PeriodicExportingMetricReader,
 } from "@opentelemetry/sdk-metrics";
-import {
-  ATTR_NETWORK_LOCAL_ADDRESS,
-  ATTR_SERVICE_NAME,
-  ATTR_SERVICE_VERSION,
-} from "@opentelemetry/semantic-conventions";
-import * as os from "os";
 import { ConfigOTelInterface } from "./models/ConfigOTelInterface";
 
 export class StandardMeter {
@@ -26,40 +26,31 @@ export class StandardMeter {
       const collectorOptions = {
         url: config.OPENTELEMETRY_COLLECTOR_HTTP_METRICS,
         headers: {} as Record<string, string>,
-        concurrencyLimit: 1,
+        concurrencyLimit: 5,
       };
       if (config.OPENTELEMETRY_COLLECT_AUTHORIZATION_HEADER) {
-        collectorOptions.headers[
-          "Authorization"
-        ] = `Bearer ${config.OPENTELEMETRY_COLLECT_AUTHORIZATION_HEADER}`;
+        collectorOptions.headers["Authorization"] =
+          `Bearer ${config.OPENTELEMETRY_COLLECT_AUTHORIZATION_HEADER}`;
       }
       const metricExporter = new OTLPMetricExporter(collectorOptions);
       meterProvider = new MeterProvider({
-        resource: resourceFromAttributes({
-          [ATTR_SERVICE_NAME]: `${this.serviceName}`,
-          [ATTR_SERVICE_VERSION]: `${this.serviceVersion}`,
-          [ATTR_NETWORK_LOCAL_ADDRESS]: os.hostname(),
-        }),
+        resource: createOTelResource(this.serviceName, this.serviceVersion),
         readers: [
           new PeriodicExportingMetricReader({
             exporter: metricExporter,
             exportIntervalMillis:
-              config.OPENTELEMETRY_COLLECTOR_EXPORT_METRICS_INTERVAL_SECONDS *
-              1000,
+              (config.OPENTELEMETRY_COLLECTOR_EXPORT_METRICS_INTERVAL_SECONDS ??
+                60) * 1000,
           }),
         ],
       });
     } else {
       meterProvider = new MeterProvider({
-        resource: resourceFromAttributes({
-          [ATTR_SERVICE_NAME]: `${this.serviceName}`,
-          [ATTR_SERVICE_VERSION]: `${this.serviceVersion}`,
-          [ATTR_NETWORK_LOCAL_ADDRESS]: os.hostname(),
-        }),
+        resource: createOTelResource(this.serviceName, this.serviceVersion),
       });
     }
     this.meter = meterProvider.getMeter(
-      `${this.serviceName}:${this.serviceVersion}`
+      `${this.serviceName}:${this.serviceVersion}`,
     );
   }
 
@@ -67,7 +58,7 @@ export class StandardMeter {
     return this.meter.createCounter(`${this.serviceName}.${key}`);
   }
 
-  public createUpDownCounter(key: string): Counter {
+  public createUpDownCounter(key: string): UpDownCounter {
     return this.meter.createUpDownCounter(`${this.serviceName}.${key}`);
   }
 
@@ -79,10 +70,12 @@ export class StandardMeter {
     key: string,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     callback: (observableResult: any) => void,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    description: any = null
+    description?: string,
   ): ObservableGauge {
-    const observableGauge = this.meter.createObservableGauge(key, description);
+    const observableGauge = this.meter.createObservableGauge(
+      key,
+      description ? { description } : undefined,
+    );
     observableGauge.addCallback(callback);
     return observableGauge;
   }
