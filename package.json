@@ -1,6 +1,6 @@
 {
   "name": "@devopsplaybook.io/otel-utils",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Utility to simplify integration with Open Telemetry",
   "keywords": [
     "Open",
@@ -16,34 +16,40 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc",
+    "lint": "eslint src",
+    "test": "jest --coverage",
     "dependencies": ""
   },
   "dependencies": {
     "@opentelemetry/api": "^1.9.1",
-    "@opentelemetry/api-logs": "^0.218.0",
-    "@opentelemetry/auto-instrumentations-node": "^0.76.0",
-    "@opentelemetry/context-async-hooks": "^2.7.1",
-    "@opentelemetry/core": "^2.7.1",
-    "@opentelemetry/exporter-logs-otlp-http": "^0.218.0",
-    "@opentelemetry/exporter-metrics-otlp-http": "^0.218.0",
-    "@opentelemetry/exporter-trace-otlp-http": "^0.218.0",
+    "@opentelemetry/api-logs": "^0.219.0",
+    "@opentelemetry/auto-instrumentations-node": "^0.77.0",
+    "@opentelemetry/context-async-hooks": "^2.8.0",
+    "@opentelemetry/core": "^2.8.0",
+    "@opentelemetry/exporter-logs-otlp-http": "^0.219.0",
+    "@opentelemetry/exporter-metrics-otlp-http": "^0.219.0",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.219.0",
     "@opentelemetry/id-generator-aws-xray": "^2.1.0",
-    "@opentelemetry/resources": "^2.7.1",
-    "@opentelemetry/sdk-logs": "^0.218.0",
-    "@opentelemetry/sdk-metrics": "^2.7.1",
-    "@opentelemetry/sdk-node": "^0.218.0",
-    "@opentelemetry/sdk-trace-base": "^2.7.1",
-    "@opentelemetry/sdk-trace-node": "^2.7.1",
-    "@opentelemetry/sdk-trace-web": "^2.7.1",
+    "@opentelemetry/resources": "^2.8.0",
+    "@opentelemetry/sdk-logs": "^0.219.0",
+    "@opentelemetry/sdk-metrics": "^2.8.0",
+    "@opentelemetry/sdk-node": "^0.219.0",
+    "@opentelemetry/sdk-trace-base": "^2.8.0",
+    "@opentelemetry/sdk-trace-node": "^2.8.0",
+    "@opentelemetry/sdk-trace-web": "^2.8.0",
     "@opentelemetry/semantic-conventions": "^1.41.1"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@types/node": "^25.9.1",
+    "@types/jest": "^30.0.0",
+    "@types/node": "^26.0.1",
     "@types/sqlite3": "^5.1.0",
+    "eslint": "^10.5.0",
+    "jest": "^30.4.2",
+    "ts-jest": "^29.4.11",
     "ts-node": "^10.9.2",
-    "typescript-eslint": "^8.59.4",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.62.0"
   },
   "publishConfig": {
     "access": "public"
