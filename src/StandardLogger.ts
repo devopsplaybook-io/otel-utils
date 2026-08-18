@@ -32,7 +32,8 @@ export class StandardLogger implements StandardLoggerInterface {
 
       const loggerProvider = new LoggerProvider({
         processors: [
-          new BatchLogRecordProcessor(exporter, {
+          new BatchLogRecordProcessor({
+            exporter,
             maxQueueSize: 2048,
             scheduledDelayMillis:
               (config.OPENTELEMETRY_COLLECTOR_EXPORT_LOGS_INTERVAL_SECONDS ??
