@@ -15,6 +15,7 @@ import { ConfigOTelInterface } from "./models/ConfigOTelInterface";
 
 export class StandardMeter {
   private meter: Meter;
+  private meterProvider: MeterProvider;
   private serviceVersion: string;
   private serviceName: string;
 
@@ -49,9 +50,18 @@ export class StandardMeter {
         resource: createOTelResource(this.serviceName, this.serviceVersion),
       });
     }
+    this.meterProvider = meterProvider;
     this.meter = meterProvider.getMeter(
       `${this.serviceName}:${this.serviceVersion}`,
     );
+  }
+
+  public forceFlush(): Promise<void> {
+    return this.meterProvider.forceFlush();
+  }
+
+  public shutdown(): Promise<void> {
+    return this.meterProvider.shutdown();
   }
 
   public createCounter(key: string): Counter {

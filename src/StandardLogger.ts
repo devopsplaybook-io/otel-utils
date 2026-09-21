@@ -12,6 +12,7 @@ import type { StandardLoggerInterface } from "./models/StandardLoggerInterface";
 
 export class StandardLogger implements StandardLoggerInterface {
   private logger?: OTelLogger;
+  private loggerProvider?: LoggerProvider;
   private serviceVersion?: string;
   private serviceName?: string;
 
@@ -43,10 +44,23 @@ export class StandardLogger implements StandardLoggerInterface {
         resource: createOTelResource(this.serviceName, this.serviceVersion),
       });
 
+      this.loggerProvider = loggerProvider;
       this.logger = loggerProvider.getLogger(
         `${this.serviceName}:${this.serviceVersion}`,
       );
     }
+  }
+
+  public forceFlush(): Promise<void> {
+    return this.loggerProvider
+      ? this.loggerProvider.forceFlush()
+      : Promise.resolve();
+  }
+
+  public shutdown(): Promise<void> {
+    return this.loggerProvider
+      ? this.loggerProvider.shutdown()
+      : Promise.resolve();
   }
 
   public getLogger(): OTelLogger | undefined {
