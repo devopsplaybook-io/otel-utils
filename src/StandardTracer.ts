@@ -22,6 +22,7 @@ export class StandardTracer {
   private static readonly PROPAGATOR = new W3CTraceContextPropagator();
 
   private tracer: Tracer;
+  private traceProvider: NodeTracerProvider;
   private serviceVersion: string;
   private serviceName: string;
 
@@ -48,12 +49,21 @@ export class StandardTracer {
       spanProcessors,
     });
     traceProvider.register();
+    this.traceProvider = traceProvider;
     const contextManager = new AsyncHooksContextManager();
     contextManager.enable();
     opentelemetry.context.setGlobalContextManager(contextManager);
     this.tracer = opentelemetry.trace.getTracer(
       `${this.serviceName}:${this.serviceVersion}`,
     );
+  }
+
+  public forceFlush(): Promise<void> {
+    return this.traceProvider.forceFlush();
+  }
+
+  public shutdown(): Promise<void> {
+    return this.traceProvider.shutdown();
   }
 
   public startSpan(name: string, parentSpan?: Span): Span {

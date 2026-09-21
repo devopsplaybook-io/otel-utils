@@ -50,6 +50,8 @@ span.end();
 
 - `startSpan(name, parentSpan?)` — Creates a span. When no `parentSpan` is provided, adds `http.request_method=BACKEND` and `http.route` attributes. Span names are sanitized to `[a-zA-Z0-9-_/]`.
 - `static updateHttpHeader(context, headers?)` — Injects W3C trace context into an HTTP headers object for propagation to downstream services.
+- `forceFlush()` — Flushes pending spans to the exporter.
+- `shutdown()` — Shuts down the tracer provider and flushes pending spans (call once, on process exit).
 
 ### StandardLogger
 
@@ -70,6 +72,8 @@ moduleLog.info("Hello world");
 - `initOTel(config)` — Initializes the logger provider and optional OTLP exporter.
 - `getLogger()` — Returns the underlying OTel `Logger` or `undefined`.
 - `createModuleLogger(moduleName)` — Creates a `ModuleLogger` scoped to a module name.
+- `forceFlush()` — Flushes pending log records to the exporter (no-op when the provider was never initialized).
+- `shutdown()` — Shuts down the logger provider and flushes pending log records; no-op when the provider was never initialized (call once, on process exit).
 
 ### ModuleLogger
 
@@ -122,6 +126,8 @@ const cpuGauge = meter.createObservableGauge(
 - `createUpDownCounter(key)` — Creates an `UpDownCounter`.
 - `createHistogram(key)` — Creates a `Histogram`.
 - `createObservableGauge(key, callback, description?)` — Creates an `ObservableGauge` with a callback. Description is optional.
+- `forceFlush()` — Flushes pending metric data points to the exporter.
+- `shutdown()` — Shuts down the meter provider and flushes pending metric data points (call once, on process exit).
 
 ## Internal Utilities
 
