@@ -1,6 +1,6 @@
 {
   "name": "@devopsplaybook.io/otel-utils",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Utility to simplify integration with Open Telemetry",
   "keywords": [
     "Open",
@@ -46,7 +46,7 @@
     "@types/node": "^26.6.2",
     "@types/sqlite3": "^5.1.0",
     "jest": "^30.5.2",
-    "oxlint": "^1.83.0",
+    "oxlint": "^1.85.0",
     "typescript": "^7.0.2"
   },
   "publishConfig": {
