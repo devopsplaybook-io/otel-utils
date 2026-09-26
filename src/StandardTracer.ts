@@ -1,6 +1,7 @@
 import opentelemetry, {
   defaultTextMapSetter,
   ROOT_CONTEXT,
+  SpanKind,
   trace,
   Tracer,
 } from "@opentelemetry/api";
@@ -16,6 +17,20 @@ import {
 } from "@opentelemetry/semantic-conventions";
 import { ConfigOTelInterface } from "./models/ConfigOTelInterface";
 import { createOTelResource } from "./utils/createResource";
+
+/**
+ * Options accepted by {@link StandardTracer.startSpan}.
+ */
+export interface StandardTracerStartSpanOptions {
+  /**
+   * OpenTelemetry span kind (default `SpanKind.INTERNAL`).
+   *
+   * Providing options means the caller describes the span itself: the
+   * parentless default attributes (`http.request.method=BACKEND` and the
+   * synthetic `http.route`) are not added.
+   */
+  kind?: SpanKind;
+}
 
 export class StandardTracer {
   private static readonly SPAN_NAME_SANITIZE_RE = /[^a-zA-Z0-9-_/]/g;
@@ -56,7 +71,11 @@ export class StandardTracer {
     );
   }
 
-  public startSpan(name: string, parentSpan?: Span): Span {
+  public startSpan(
+    name: string,
+    parentSpan?: Span,
+    options?: StandardTracerStartSpanOptions,
+  ): Span {
     const sanitizedName = String(name).replace(
       StandardTracer.SPAN_NAME_SANITIZE_RE,
       "_",
@@ -64,9 +83,12 @@ export class StandardTracer {
     if (parentSpan) {
       return this.tracer.startSpan(
         sanitizedName,
-        undefined,
+        options,
         opentelemetry.trace.setSpan(opentelemetry.context.active(), parentSpan),
       ) as Span;
+    }
+    if (options) {
+      return this.tracer.startSpan(sanitizedName, options) as Span;
     }
     const span = this.tracer.startSpan(sanitizedName) as Span;
     span.setAttribute(ATTR_HTTP_REQUEST_METHOD, `BACKEND`);

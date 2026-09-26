@@ -48,7 +48,7 @@ span.end();
 
 **Methods:**
 
-- `startSpan(name, parentSpan?)` — Creates a span. When no `parentSpan` is provided, adds `http.request_method=BACKEND` and `http.route` attributes. Span names are sanitized to `[a-zA-Z0-9-_/]`.
+- `startSpan(name, parentSpan?, options?)` — Creates a span. Span names are sanitized to `[a-zA-Z0-9-_/]`. When neither `parentSpan` nor `options` is given, the span is `SpanKind.INTERNAL` and carries `http.request_method=BACKEND` and a synthetic `http.route` attribute. Passing `options` (e.g. `{ kind: SpanKind.SERVER }`) forwards them to the OpenTelemetry SDK instead and skips those synthetic attributes, because the caller then describes the span itself.
 - `static updateHttpHeader(context, headers?)` — Injects W3C trace context into an HTTP headers object for propagation to downstream services.
 
 ### StandardLogger
