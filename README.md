@@ -21,7 +21,6 @@ All classes accept a `ConfigOTelInterface` object:
 | `OPENTELEMETRY_COLLECTOR_HTTP_LOGS`                       | `string?`  | —       | OTLP HTTP endpoint for logs     |
 | `OPENTELEMETRY_COLLECTOR_EXPORT_LOGS_INTERVAL_SECONDS`    | `number?`  | `60`    | Log export interval             |
 | `OPENTELEMETRY_COLLECTOR_EXPORT_METRICS_INTERVAL_SECONDS` | `number?`  | `60`    | Metrics export interval         |
-| `OPENTELEMETRY_COLLECTOR_AWS`                             | `boolean?` | —       | AWS-specific feature flag       |
 | `OPENTELEMETRY_COLLECT_AUTHORIZATION_HEADER`              | `string?`  | —       | Bearer token for collector auth |
 
 When a collector endpoint is not provided, the corresponding signal (traces, logs, or metrics) is initialized with no export — the provider is still available but no data is sent.
@@ -50,10 +49,11 @@ span.end();
 
 - `startSpan(name, parentSpan?, options?)` — Creates a span. Span names are sanitized to `[a-zA-Z0-9-_/]`. When neither `parentSpan` nor `options` is given, the span is `SpanKind.INTERNAL` and carries `http.request_method=BACKEND` and a synthetic `http.route` attribute. Passing `options` (e.g. `{ kind: SpanKind.SERVER }`) forwards them to the OpenTelemetry SDK instead and skips those synthetic attributes, because the caller then describes the span itself.
 - `static updateHttpHeader(context, headers?)` — Injects W3C trace context into an HTTP headers object for propagation to downstream services.
+- `shutdown()` — Flushes buffered spans and shuts the tracer provider down.
 
 ### StandardLogger
 
-Initializes a `LoggerProvider` with an OTLP log exporter and a `BatchLogRecordProcessor` (`maxQueueSize: 2048`).
+Initializes a `LoggerProvider` with an OTLP log exporter and a `BatchLogRecordProcessor` (`maxQueueSize: 2048`). When `OPENTELEMETRY_COLLECTOR_HTTP_LOGS` is set, the provider is also registered as the global OTel logger provider, so `logs.getLogger(...)` from `@opentelemetry/api-logs` returns loggers wired to the configured exporter. Without that endpoint, `initOTel` still records the service identity but registers nothing globally and `getLogger()` returns `undefined`.
 
 ```typescript
 import { StandardLogger } from "@devopsplaybook.io/otel-utils";
@@ -67,9 +67,10 @@ moduleLog.info("Hello world");
 
 **Methods:**
 
-- `initOTel(config)` — Initializes the logger provider and optional OTLP exporter.
+- `initOTel(config)` — Initializes the logger provider and optional OTLP exporter, and registers the provider globally when a logs endpoint is configured.
 - `getLogger()` — Returns the underlying OTel `Logger` or `undefined`.
 - `createModuleLogger(moduleName)` — Creates a `ModuleLogger` scoped to a module name.
+- `shutdown()` — Flushes buffered log records and shuts the logger provider down. No-op when no logs endpoint is configured.
 
 ### ModuleLogger
 
@@ -122,6 +123,22 @@ const cpuGauge = meter.createObservableGauge(
 - `createUpDownCounter(key)` — Creates an `UpDownCounter`.
 - `createHistogram(key)` — Creates a `Histogram`.
 - `createObservableGauge(key, callback, description?)` — Creates an `ObservableGauge` with a callback. Description is optional.
+- `shutdown()` — Flushes buffered metrics and shuts the meter provider down.
+
+## Graceful shutdown
+
+`StandardTracer`, `StandardLogger` and `StandardMeter` buffer telemetry: `BatchSpanProcessor`, `BatchLogRecordProcessor` and `PeriodicExportingMetricReader` hold data until their next export cycle. On process exit that buffered data would be lost, so wire the `shutdown()` methods to `SIGTERM`/`SIGINT` handlers:
+
+```typescript
+const shutdown = async () => {
+  await Promise.all([tracer.shutdown(), logger.shutdown(), meter.shutdown()]);
+  process.exit(0);
+};
+process.on("SIGTERM", shutdown);
+process.on("SIGINT", shutdown);
+```
+
+Each `shutdown()` flushes pending telemetry to the collector before resolving; the methods are idempotent and can be called even when a signal was not configured (they resolve immediately).
 
 ## Internal Utilities
 

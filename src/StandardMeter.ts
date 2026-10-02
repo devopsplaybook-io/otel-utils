@@ -15,13 +15,13 @@ import { ConfigOTelInterface } from "./models/ConfigOTelInterface";
 
 export class StandardMeter {
   private meter: Meter;
+  private meterProvider: MeterProvider;
   private serviceVersion: string;
   private serviceName: string;
 
   constructor(config: ConfigOTelInterface) {
     this.serviceName = config.SERVICE_ID;
     this.serviceVersion = config.VERSION;
-    let meterProvider;
     if (config.OPENTELEMETRY_COLLECTOR_HTTP_METRICS) {
       const collectorOptions = {
         url: config.OPENTELEMETRY_COLLECTOR_HTTP_METRICS,
@@ -33,7 +33,7 @@ export class StandardMeter {
           `Bearer ${config.OPENTELEMETRY_COLLECT_AUTHORIZATION_HEADER}`;
       }
       const metricExporter = new OTLPMetricExporter(collectorOptions);
-      meterProvider = new MeterProvider({
+      this.meterProvider = new MeterProvider({
         resource: createOTelResource(this.serviceName, this.serviceVersion),
         readers: [
           new PeriodicExportingMetricReader({
@@ -45,13 +45,17 @@ export class StandardMeter {
         ],
       });
     } else {
-      meterProvider = new MeterProvider({
+      this.meterProvider = new MeterProvider({
         resource: createOTelResource(this.serviceName, this.serviceVersion),
       });
     }
-    this.meter = meterProvider.getMeter(
+    this.meter = this.meterProvider.getMeter(
       `${this.serviceName}:${this.serviceVersion}`,
     );
+  }
+
+  public async shutdown(): Promise<void> {
+    await this.meterProvider.shutdown();
   }
 
   public createCounter(key: string): Counter {

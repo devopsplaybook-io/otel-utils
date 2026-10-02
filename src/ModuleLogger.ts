@@ -1,10 +1,10 @@
 import { SeverityNumber } from "@opentelemetry/api-logs";
+import type { Span } from "@opentelemetry/api";
 import { StandardLoggerInterface } from "./models/StandardLoggerInterface";
-import { Span } from "@opentelemetry/sdk-trace-base";
 
 export class ModuleLogger {
   private module: string;
-  private standardLogger?: StandardLoggerInterface;
+  private standardLogger: StandardLoggerInterface;
 
   constructor(module: string, standardLogger: StandardLoggerInterface) {
     this.module = module;
@@ -30,8 +30,6 @@ export class ModuleLogger {
     error?: Error | null,
     context?: Span,
   ): void {
-    let formattedMessage = message;
-
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const attributes: Record<string, any> = { "log.type": "custom" };
 
@@ -39,25 +37,23 @@ export class ModuleLogger {
       attributes["exception.type"] = error.name;
       attributes["exception.message"] = error.message;
       attributes["exception.stacktrace"] = error.stack;
-      formattedMessage += "\n" + error.stack;
     }
 
     if (context) {
       const spanCtx = context.spanContext();
-      if (spanCtx) {
-        attributes["span.id"] = spanCtx.spanId;
-        attributes["trace.id"] = spanCtx.traceId;
-      }
+      attributes["span.id"] = spanCtx.spanId;
+      attributes["trace.id"] = spanCtx.traceId;
     }
 
-    console.log(`[${level}] [${this.module}] ${formattedMessage}`);
-    if (!this.standardLogger?.getLogger()) {
+    console.log(`[${level}] [${this.module}] ${message}`);
+    const logger = this.standardLogger.getLogger();
+    if (!logger) {
       return;
     }
-    this.standardLogger.getLogger()?.emit({
+    logger.emit({
       severityNumber,
       severityText: level,
-      body: `[${this.module}] ${formattedMessage}`,
+      body: `[${this.module}] ${message}`,
       attributes,
     });
   }
