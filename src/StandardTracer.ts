@@ -5,6 +5,7 @@ import opentelemetry, {
   trace,
   Tracer,
 } from "@opentelemetry/api";
+import type { Span as ApiSpan } from "@opentelemetry/api";
 import { AsyncHooksContextManager } from "@opentelemetry/context-async-hooks";
 import { W3CTraceContextPropagator } from "@opentelemetry/core";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
@@ -36,6 +37,7 @@ export class StandardTracer {
   private static readonly SPAN_NAME_SANITIZE_RE = /[^a-zA-Z0-9-_/]/g;
   private static readonly PROPAGATOR = new W3CTraceContextPropagator();
 
+  private traceProvider: NodeTracerProvider;
   private tracer: Tracer;
   private serviceVersion: string;
   private serviceName: string;
@@ -57,12 +59,12 @@ export class StandardTracer {
       });
       spanProcessors.push(new BatchSpanProcessor(exporter));
     }
-    const traceProvider = new NodeTracerProvider({
+    this.traceProvider = new NodeTracerProvider({
       idGenerator: new AWSXRayIdGenerator(),
       resource: createOTelResource(this.serviceName, this.serviceVersion),
       spanProcessors,
     });
-    traceProvider.register();
+    this.traceProvider.register();
     const contextManager = new AsyncHooksContextManager();
     contextManager.enable();
     opentelemetry.context.setGlobalContextManager(contextManager);
@@ -71,12 +73,16 @@ export class StandardTracer {
     );
   }
 
+  public async shutdown(): Promise<void> {
+    await this.traceProvider.shutdown();
+  }
+
   public startSpan(
     name: string,
     parentSpan?: Span,
     options?: StandardTracerStartSpanOptions,
   ): Span {
-    const sanitizedName = String(name).replace(
+    const sanitizedName = name.replace(
       StandardTracer.SPAN_NAME_SANITIZE_RE,
       "_",
     );
@@ -100,10 +106,7 @@ export class StandardTracer {
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  public static updateHttpHeader(context: Span, headers = {}): any {
-    if (!headers) {
-      headers = {};
-    }
+  public static updateHttpHeader(context: ApiSpan, headers = {}): any {
     StandardTracer.PROPAGATOR.inject(
       trace.setSpanContext(ROOT_CONTEXT, context.spanContext()),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any

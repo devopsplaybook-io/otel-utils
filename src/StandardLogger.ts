@@ -1,4 +1,4 @@
-import type { Logger as OTelLogger } from "@opentelemetry/api-logs";
+import { logs, type Logger as OTelLogger } from "@opentelemetry/api-logs";
 import { OTLPLogExporter } from "@opentelemetry/exporter-logs-otlp-http";
 import {
   BatchLogRecordProcessor,
@@ -12,6 +12,7 @@ import type { StandardLoggerInterface } from "./models/StandardLoggerInterface";
 
 export class StandardLogger implements StandardLoggerInterface {
   private logger?: OTelLogger;
+  private loggerProvider?: LoggerProvider;
   private serviceVersion?: string;
   private serviceName?: string;
 
@@ -30,7 +31,7 @@ export class StandardLogger implements StandardLoggerInterface {
         headers: exporterHeaders,
       });
 
-      const loggerProvider = new LoggerProvider({
+      this.loggerProvider = new LoggerProvider({
         processors: [
           new BatchLogRecordProcessor({
             exporter,
@@ -43,10 +44,15 @@ export class StandardLogger implements StandardLoggerInterface {
         resource: createOTelResource(this.serviceName, this.serviceVersion),
       });
 
-      this.logger = loggerProvider.getLogger(
+      logs.setGlobalLoggerProvider(this.loggerProvider);
+      this.logger = this.loggerProvider.getLogger(
         `${this.serviceName}:${this.serviceVersion}`,
       );
     }
+  }
+
+  public async shutdown(): Promise<void> {
+    await this.loggerProvider?.shutdown();
   }
 
   public getLogger(): OTelLogger | undefined {
