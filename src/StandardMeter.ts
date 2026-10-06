@@ -13,6 +13,17 @@ import {
 } from "@opentelemetry/sdk-metrics";
 import { ConfigOTelInterface } from "./models/ConfigOTelInterface";
 
+/**
+ * Options accepted by {@link StandardMeter.createHistogram}.
+ */
+export interface StandardMeterCreateHistogramOptions {
+  /**
+   * Create the histogram without the `${serviceName}.` prefix:
+   * exported exactly as `key`.
+   */
+  unprefixed?: boolean;
+}
+
 export class StandardMeter {
   private meter: Meter;
   private meterProvider: MeterProvider;
@@ -66,8 +77,13 @@ export class StandardMeter {
     return this.meter.createUpDownCounter(`${this.serviceName}.${key}`);
   }
 
-  public createHistogram(key: string): Histogram {
-    return this.meter.createHistogram(`${this.serviceName}.${key}`);
+  public createHistogram(
+    key: string,
+    options?: StandardMeterCreateHistogramOptions,
+  ): Histogram {
+    return this.meter.createHistogram(
+      options?.unprefixed ? key : `${this.serviceName}.${key}`,
+    );
   }
 
   public createObservableGauge(

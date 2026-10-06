@@ -97,6 +97,24 @@ describe("StandardMeter", () => {
     );
   });
 
+  it("creates a histogram without the service-name prefix when the unprefixed option is set", async () => {
+    const meter = new StandardMeter({
+      SERVICE_ID: "metric-service",
+      VERSION: "1.0.0",
+      OPENTELEMETRY_COLLECTOR_HTTP_METRICS: "http://collector:4318/v1/metrics",
+    });
+
+    meter.createHistogram("session.duration", { unprefixed: true }).record(1);
+    meter.createHistogram("requests.latency").record(42);
+
+    await meter.shutdown();
+
+    const names = metricNames(lastExporter());
+    expect(names).toContain("session.duration");
+    expect(names).toContain("metric-service.requests.latency");
+    expect(names).not.toContain("metric-service.session.duration");
+  });
+
   it("works without a collector and without a gauge description", async () => {
     const meter = new StandardMeter({
       SERVICE_ID: "metric-service",
