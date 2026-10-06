@@ -121,7 +121,7 @@ const cpuGauge = meter.createObservableGauge(
 
 - `createCounter(key)` — Creates a `Counter` with name `${serviceName}.${key}`.
 - `createUpDownCounter(key)` — Creates an `UpDownCounter`.
-- `createHistogram(key)` — Creates a `Histogram`.
+- `createHistogram(key, options?)` — Creates a `Histogram` named `${serviceName}.${key}`; with `{ unprefixed: true }` the histogram is created exactly as `key`, without the service-name prefix.
 - `createObservableGauge(key, callback, description?)` — Creates an `ObservableGauge` with a callback. Description is optional.
 - `shutdown()` — Flushes buffered metrics and shuts the meter provider down.
 
