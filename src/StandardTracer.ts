@@ -6,12 +6,15 @@ import opentelemetry, {
   Tracer,
 } from "@opentelemetry/api";
 import type { Span as ApiSpan } from "@opentelemetry/api";
-import { AsyncHooksContextManager } from "@opentelemetry/context-async-hooks";
+import { AsyncLocalStorageContextManager } from "@opentelemetry/context-async-hooks";
 import { W3CTraceContextPropagator } from "@opentelemetry/core";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
 import { AWSXRayIdGenerator } from "@opentelemetry/id-generator-aws-xray";
-import { BatchSpanProcessor, Span } from "@opentelemetry/sdk-trace-base";
-import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
+import {
+  BatchSpanProcessor,
+  type Span,
+  TracerProvider,
+} from "@opentelemetry/sdk-trace";
 import {
   ATTR_HTTP_REQUEST_METHOD,
   ATTR_HTTP_ROUTE,
@@ -37,7 +40,7 @@ export class StandardTracer {
   private static readonly SPAN_NAME_SANITIZE_RE = /[^a-zA-Z0-9-_/]/g;
   private static readonly PROPAGATOR = new W3CTraceContextPropagator();
 
-  private traceProvider: NodeTracerProvider;
+  private traceProvider: TracerProvider;
   private tracer: Tracer;
   private serviceVersion: string;
   private serviceName: string;
@@ -57,15 +60,17 @@ export class StandardTracer {
         url: config.OPENTELEMETRY_COLLECTOR_HTTP_TRACES,
         headers: exporterHeaders,
       });
-      spanProcessors.push(new BatchSpanProcessor(exporter));
+      spanProcessors.push(new BatchSpanProcessor({ exporter }));
     }
-    this.traceProvider = new NodeTracerProvider({
+    this.traceProvider = new TracerProvider({
       idGenerator: new AWSXRayIdGenerator(),
       resource: createOTelResource(this.serviceName, this.serviceVersion),
       spanProcessors,
     });
-    this.traceProvider.register();
-    const contextManager = new AsyncHooksContextManager();
+    // OTel v3 removed TracerProvider.register(): the provider and the context
+    // manager must be installed on the global API explicitly.
+    trace.setGlobalTracerProvider(this.traceProvider);
+    const contextManager = new AsyncLocalStorageContextManager();
     contextManager.enable();
     opentelemetry.context.setGlobalContextManager(contextManager);
     this.tracer = opentelemetry.trace.getTracer(

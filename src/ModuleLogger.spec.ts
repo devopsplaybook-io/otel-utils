@@ -2,7 +2,7 @@ import type { Span } from "@opentelemetry/api";
 import {
   SeverityNumber,
   type Logger as OTelLogger,
-} from "@opentelemetry/api-logs";
+} from "@opentelemetry/api";
 import { ModuleLogger } from "./ModuleLogger";
 import type { StandardLoggerInterface } from "./models/StandardLoggerInterface";
 
