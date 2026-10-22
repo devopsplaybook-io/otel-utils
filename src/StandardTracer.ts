@@ -1,4 +1,5 @@
-import opentelemetry, {
+import {
+  context,
   defaultTextMapSetter,
   ROOT_CONTEXT,
   SpanKind,
@@ -22,6 +23,21 @@ import {
 import { ConfigOTelInterface } from "./models/ConfigOTelInterface";
 import { createOTelResource } from "./utils/createResource";
 
+let globalTracerProvider: TracerProvider | undefined;
+let contextManagerInitialized = false;
+
+function getRegisteredTracerProvider(): unknown {
+  const provider = trace.getTracerProvider() as unknown as {
+    getDelegate?: () => unknown;
+  };
+  return typeof provider.getDelegate === "function"
+    ? provider.getDelegate()
+    : provider;
+}
+
+const ALREADY_REGISTERED_WARNING =
+  "[otel-utils] A global tracer provider is already registered; StandardTracer will not replace it. This instance still exports spans through its own provider, but trace.getTracer() keeps using the existing provider.";
+
 /**
  * Options accepted by {@link StandardTracer.startSpan}.
  */
@@ -44,6 +60,8 @@ export class StandardTracer {
   private tracer: Tracer;
   private serviceVersion: string;
   private serviceName: string;
+  private ownsGlobalProvider = false;
+  private shutdownPromise?: Promise<void>;
 
   constructor(config: ConfigOTelInterface) {
     this.serviceName = config.SERVICE_ID;
@@ -67,19 +85,20 @@ export class StandardTracer {
       resource: createOTelResource(this.serviceName, this.serviceVersion),
       spanProcessors,
     });
-    // OTel v3 removed TracerProvider.register(): the provider and the context
-    // manager must be installed on the global API explicitly.
-    trace.setGlobalTracerProvider(this.traceProvider);
-    const contextManager = new AsyncLocalStorageContextManager();
-    contextManager.enable();
-    opentelemetry.context.setGlobalContextManager(contextManager);
-    this.tracer = opentelemetry.trace.getTracer(
+    // Resolve the tracer from this instance's provider: the global API may be
+    // owned by another instance and would silently export through it.
+    this.tracer = this.traceProvider.getTracer(
       `${this.serviceName}:${this.serviceVersion}`,
     );
+    this.registerGlobalProvider();
+    initializeContextManager();
   }
 
-  public async shutdown(): Promise<void> {
-    await this.traceProvider.shutdown();
+  public shutdown(): Promise<void> {
+    if (!this.shutdownPromise) {
+      this.shutdownPromise = this.doShutdown();
+    }
+    return this.shutdownPromise;
   }
 
   public startSpan(
@@ -95,7 +114,7 @@ export class StandardTracer {
       return this.tracer.startSpan(
         sanitizedName,
         options,
-        opentelemetry.trace.setSpan(opentelemetry.context.active(), parentSpan),
+        trace.setSpan(context.active(), parentSpan),
       ) as Span;
     }
     if (options) {
@@ -119,5 +138,51 @@ export class StandardTracer {
       defaultTextMapSetter,
     );
     return headers;
+  }
+
+  private registerGlobalProvider(): void {
+    if (globalTracerProvider) {
+      if (getRegisteredTracerProvider() === globalTracerProvider) {
+        console.warn(ALREADY_REGISTERED_WARNING);
+        return;
+      }
+      // The previous provider is no longer registered (disabled elsewhere).
+      globalTracerProvider = undefined;
+    }
+    if (trace.setGlobalTracerProvider(this.traceProvider)) {
+      globalTracerProvider = this.traceProvider;
+      this.ownsGlobalProvider = true;
+    } else {
+      console.warn(ALREADY_REGISTERED_WARNING);
+    }
+  }
+
+  private async doShutdown(): Promise<void> {
+    await this.traceProvider.shutdown();
+    if (
+      this.ownsGlobalProvider &&
+      getRegisteredTracerProvider() === this.traceProvider
+    ) {
+      trace.disable();
+    }
+    if (globalTracerProvider === this.traceProvider) {
+      globalTracerProvider = undefined;
+    }
+    this.ownsGlobalProvider = false;
+  }
+}
+
+function initializeContextManager(): void {
+  if (contextManagerInitialized) {
+    return;
+  }
+  contextManagerInitialized = true;
+  const contextManager = new AsyncLocalStorageContextManager();
+  if (context.setGlobalContextManager(contextManager)) {
+    contextManager.enable();
+  } else {
+    console.warn(
+      "[otel-utils] A global context manager is already registered; StandardTracer will keep using it for context propagation.",
+    );
   }
 }

@@ -23,18 +23,20 @@ All classes accept a `ConfigOTelInterface` object:
 | `OPENTELEMETRY_COLLECTOR_EXPORT_METRICS_INTERVAL_SECONDS` | `number?`  | `60`    | Metrics export interval         |
 | `OPENTELEMETRY_COLLECT_AUTHORIZATION_HEADER`              | `string?`  | —       | Bearer token for collector auth |
 
-When a collector endpoint is not provided, the corresponding signal (traces, logs, or metrics) is initialized with no export — the provider is still available but no data is sent.
+When a collector endpoint is not provided, the corresponding signal (traces, logs, or metrics) is initialized with no export: traces and metrics still have a local provider but no data is sent, and `StandardLogger` creates no provider (its `getLogger()` returns `undefined`).
 
 ## Exported Classes
 
 ### StandardTracer
 
-Sets up a global `NodeTracerProvider` with:
+Creates a `TracerProvider` with:
 
 - AWS X-Ray ID generator (`AWSXRayIdGenerator`)
 - OTLP HTTP trace exporter (optional, when `OPENTELEMETRY_COLLECTOR_HTTP_TRACES` is set)
-- `AsyncHooksContextManager` for automatic context propagation
+- one process-wide `AsyncLocalStorageContextManager`, installed on first construction when no other context manager is registered (kept for the process lifetime)
 - Service resource attributes (name, version, hostname)
+
+The instance exports its spans through its own provider (`tracer.startSpan(...)` is always routed to this instance). The first `StandardTracer` constructed in a process also registers its provider as the global one, so `trace.getTracer(...)` from `@opentelemetry/api` resolves to it. Later instances do not replace the global provider: they log a warning and keep exporting through their own provider — see [Provider lifecycle](#provider-lifecycle).
 
 ```typescript
 import { StandardTracer } from "@devopsplaybook.io/otel-utils";
@@ -49,17 +51,17 @@ span.end();
 
 - `startSpan(name, parentSpan?, options?)` — Creates a span. Span names are sanitized to `[a-zA-Z0-9-_/]`. When neither `parentSpan` nor `options` is given, the span is `SpanKind.INTERNAL` and carries `http.request_method=BACKEND` and a synthetic `http.route` attribute. Passing `options` (e.g. `{ kind: SpanKind.SERVER }`) forwards them to the OpenTelemetry SDK instead and skips those synthetic attributes, because the caller then describes the span itself.
 - `static updateHttpHeader(context, headers?)` — Injects W3C trace context into an HTTP headers object for propagation to downstream services.
-- `shutdown()` — Flushes buffered spans and shuts the tracer provider down.
+- `shutdown()` — Flushes buffered spans and shuts the tracer provider down. Idempotent.
 
 ### StandardLogger
 
-Initializes a `LoggerProvider` with an OTLP log exporter and a `BatchLogRecordProcessor` (`maxQueueSize: 2048`). When `OPENTELEMETRY_COLLECTOR_HTTP_LOGS` is set, the provider is also registered as the global OTel logger provider, so `logs.getLogger(...)` from `@opentelemetry/api-logs` returns loggers wired to the configured exporter. Without that endpoint, `initOTel` still records the service identity but registers nothing globally and `getLogger()` returns `undefined`.
+Initializes a `LoggerProvider` with an OTLP log exporter and a `BatchLogRecordProcessor` (`maxQueueSize: 2048`). When `OPENTELEMETRY_COLLECTOR_HTTP_LOGS` is set, the provider is also registered as the global OTel logger provider (first instance only), so `logs.getLogger(...)` from `@opentelemetry/api` returns loggers wired to the configured exporter. Each instance always logs through its own provider (`logger.createModuleLogger(...)`), so a second instance never mis-routes its records to the first one. Without that endpoint, `initOTel` still records the service identity but creates no provider and `getLogger()` returns `undefined`.
 
 ```typescript
 import { StandardLogger } from "@devopsplaybook.io/otel-utils";
 
 const logger = new StandardLogger();
-logger.initOTel(config);
+await logger.initOTel(config);
 
 const moduleLog = logger.createModuleLogger("my-module");
 moduleLog.info("Hello world");
@@ -67,10 +69,10 @@ moduleLog.info("Hello world");
 
 **Methods:**
 
-- `initOTel(config)` — Initializes the logger provider and optional OTLP exporter, and registers the provider globally when a logs endpoint is configured.
-- `getLogger()` — Returns the underlying OTel `Logger` or `undefined`.
+- `initOTel(config)` — Initializes the logger provider and optional OTLP exporter, and registers the provider globally when a logs endpoint is configured and no other logger provider is registered. Returns `Promise<void>`: the first call initializes synchronously; await it when re-initializing, because a previous provider is flushed and shut down first.
+- `getLogger()` — Returns the underlying OTel `Logger` or `undefined` (also `undefined` after `shutdown()`).
 - `createModuleLogger(moduleName)` — Creates a `ModuleLogger` scoped to a module name.
-- `shutdown()` — Flushes buffered log records and shuts the logger provider down. No-op when no logs endpoint is configured.
+- `shutdown()` — Flushes buffered log records and shuts the logger provider down. Idempotent. No-op when no logs endpoint is configured.
 
 ### ModuleLogger
 
@@ -94,7 +96,7 @@ When a `Span` is passed as `context`, the log record includes `span.id` and `tra
 
 ### StandardMeter
 
-Creates a `MeterProvider` with an optional `PeriodicExportingMetricReader` (`concurrencyLimit: 5`). Provides convenience factories for common metric types.
+Creates a `MeterProvider` with an optional `PeriodicExportingMetricReader` (`concurrencyLimit: 5`). Provides convenience factories for common metric types. When `OPENTELEMETRY_COLLECTOR_HTTP_METRICS` is set, the provider is registered as the global meter provider (first instance only), so metrics emitted through `metrics.getMeter(...)` reach the configured exporter. Unconfigured meters leave the global API untouched (Noop).
 
 ```typescript
 import { StandardMeter } from "@devopsplaybook.io/otel-utils";
@@ -123,22 +125,44 @@ const cpuGauge = meter.createObservableGauge(
 - `createUpDownCounter(key)` — Creates an `UpDownCounter`.
 - `createHistogram(key, options?)` — Creates a `Histogram` named `${serviceName}.${key}`; with `{ unprefixed: true }` the histogram is created exactly as `key`, without the service-name prefix.
 - `createObservableGauge(key, callback, description?)` — Creates an `ObservableGauge` with a callback. Description is optional.
-- `shutdown()` — Flushes buffered metrics and shuts the meter provider down.
+- `shutdown()` — Flushes buffered metrics and shuts the meter provider down. Idempotent.
+
+## Provider lifecycle
+
+OpenTelemetry's global API accepts one provider per signal per process, and the registration is one-shot until the global API is disabled. `otel-utils` manages this as follows:
+
+- **One provider per signal per process.** The first `StandardTracer`, configured `StandardLogger` and configured `StandardMeter` created in a process each register their provider globally. Global-API calls (`trace.getTracer`, `logs.getLogger`, `metrics.getMeter`) resolve to those first providers until they shut down.
+- **Additional instances keep working, locally.** A second instance does not replace the global provider: it logs a `console.warn` and still exports through its own provider, with its own `service.name`/`service.version`. Its records/spans/metrics are never attributed to another service.
+- **Re-initialisation.** Calling `StandardLogger.initOTel()` again on the same instance flushes and shuts down the previous provider (its buffered records are exported), then registers the new one as the global provider if possible. Await the returned promise when re-initializing.
+- **Shutdown.** `shutdown()` flushes pending telemetry, shuts the provider down and is idempotent. If the instance owns the global provider, it also calls `trace.disable()` / `logs.disable()` / `metrics.disable()`, returning the global API to Noop and allowing a later instance to register again. Shutting down a non-owner leaves the global provider untouched. After `StandardLogger.shutdown()`, `getLogger()` is `undefined`.
+- **Context propagation.** One `AsyncLocalStorageContextManager` is installed per process on the first `StandardTracer` construction, only when no other context manager is registered. It stays active for the process lifetime (it is never disabled), so re-initialisation keeps working.
 
 ## Graceful shutdown
 
-`StandardTracer`, `StandardLogger` and `StandardMeter` buffer telemetry: `BatchSpanProcessor`, `BatchLogRecordProcessor` and `PeriodicExportingMetricReader` hold data until their next export cycle. On process exit that buffered data would be lost, so wire the `shutdown()` methods to `SIGTERM`/`SIGINT` handlers:
+`StandardTracer`, `StandardLogger` and `StandardMeter` buffer telemetry: `BatchSpanProcessor`, `BatchLogRecordProcessor` and `PeriodicExportingMetricReader` hold data until their next export cycle. On process exit that buffered data would be lost, so flush it on `SIGTERM`/`SIGINT`.
+
+The opt-in `registerShutdownHooks` helper does this for every configured provider and exits the process with code 0 after flushing:
 
 ```typescript
-const shutdown = async () => {
-  await Promise.all([tracer.shutdown(), logger.shutdown(), meter.shutdown()]);
-  process.exit(0);
-};
-process.on("SIGTERM", shutdown);
-process.on("SIGINT", shutdown);
+import { registerShutdownHooks } from "@devopsplaybook.io/otel-utils";
+
+const cleanup = registerShutdownHooks([tracer, logger, meter]);
+// later, if the application manages its own signals:
+// cleanup();
 ```
 
-Each `shutdown()` flushes pending telemetry to the collector before resolving; the methods are idempotent and can be called even when a signal was not configured (they resolve immediately).
+Register it once, with all configured providers. A second signal received while shutting down does not exit or flush again. The returned function only removes the signal listeners.
+
+For custom flows, `shutdownAll` flushes every provider and always resolves — a failing provider is reported with `console.warn` and does not block the others:
+
+```typescript
+import { shutdownAll } from "@devopsplaybook.io/otel-utils";
+
+await shutdownAll([tracer, logger, meter]);
+process.exit(0);
+```
+
+Each `shutdown()` flushes pending telemetry to the collector before resolving; the methods are idempotent and can be called even when no collector was configured (they resolve immediately).
 
 ## Internal Utilities
 
