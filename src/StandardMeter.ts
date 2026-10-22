@@ -3,6 +3,7 @@ import {
   Histogram,
   Meter,
   metrics,
+  type MetricOptions,
   ObservableGauge,
   UpDownCounter,
 } from "@opentelemetry/api";
@@ -21,8 +22,11 @@ const ALREADY_REGISTERED_WARNING =
 
 /**
  * Options accepted by {@link StandardMeter.createHistogram}.
+ * `description`, `unit`, `valueType` and `advice` are forwarded to the
+ * OpenTelemetry Meter; `advice.explicitBucketBoundaries` sets the histogram
+ * bucket boundaries.
  */
-export interface StandardMeterCreateHistogramOptions {
+export interface StandardMeterCreateHistogramOptions extends MetricOptions {
   /**
    * Create the histogram without the `${serviceName}.` prefix:
    * exported exactly as `key`.
@@ -85,20 +89,25 @@ export class StandardMeter {
     return this.shutdownPromise;
   }
 
-  public createCounter(key: string): Counter {
-    return this.meter.createCounter(`${this.serviceName}.${key}`);
+  public createCounter(key: string, options?: MetricOptions): Counter {
+    return this.meter.createCounter(`${this.serviceName}.${key}`, options);
   }
 
-  public createUpDownCounter(key: string): UpDownCounter {
-    return this.meter.createUpDownCounter(`${this.serviceName}.${key}`);
+  public createUpDownCounter(
+    key: string,
+    options?: MetricOptions,
+  ): UpDownCounter {
+    return this.meter.createUpDownCounter(`${this.serviceName}.${key}`, options);
   }
 
   public createHistogram(
     key: string,
     options?: StandardMeterCreateHistogramOptions,
   ): Histogram {
+    const { unprefixed, ...instrumentOptions } = options ?? {};
     return this.meter.createHistogram(
-      options?.unprefixed ? key : `${this.serviceName}.${key}`,
+      unprefixed ? key : `${this.serviceName}.${key}`,
+      instrumentOptions,
     );
   }
 
@@ -106,11 +115,13 @@ export class StandardMeter {
     key: string,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     callback: (observableResult: any) => void,
-    description?: string,
+    descriptionOrOptions?: string | MetricOptions,
   ): ObservableGauge {
     const observableGauge = this.meter.createObservableGauge(
       key,
-      description ? { description } : undefined,
+      typeof descriptionOrOptions === "string"
+        ? { description: descriptionOrOptions }
+        : descriptionOrOptions,
     );
     observableGauge.addCallback(callback);
     return observableGauge;

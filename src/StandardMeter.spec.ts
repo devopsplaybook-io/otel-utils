@@ -1,8 +1,10 @@
 import { metrics } from "@opentelemetry/api";
 import { OTLPMetricExporter } from "@opentelemetry/exporter-metrics-otlp-http";
 import {
+  DataPointType,
   type InMemoryMetricExporter,
   MeterProvider,
+  type MetricData,
 } from "@opentelemetry/sdk-metrics";
 import { ConfigOTelInterface } from "./models/ConfigOTelInterface";
 import { StandardMeter } from "./StandardMeter";
@@ -39,6 +41,21 @@ function metricNames(exporter: InMemoryMetricExporter): string[] {
     .flatMap((scopeMetrics) => scopeMetrics.metrics)
     .map((metric) => metric.descriptor.name);
 }
+
+function metricData(
+  exporter: InMemoryMetricExporter,
+  name: string,
+): MetricData | undefined {
+  return exporter
+    .getMetrics()
+    .flatMap((resourceMetrics) => resourceMetrics.scopeMetrics)
+    .flatMap((scopeMetrics) => scopeMetrics.metrics)
+    .find((metric) => metric.descriptor.name === name);
+}
+
+const SEMCONV_HTTP_DURATION_BOUNDARIES = [
+  0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 7.5, 10,
+];
 
 function meterConfig(
   serviceId: string,
@@ -124,7 +141,8 @@ describe("StandardMeter", () => {
 
     await meter.shutdown();
 
-    expect(metricNames(lastExporter())).toEqual(
+    const exporter = lastExporter();
+    expect(metricNames(exporter)).toEqual(
       expect.arrayContaining([
         "metric-service.requests.total",
         "metric-service.users.active",
@@ -132,6 +150,101 @@ describe("StandardMeter", () => {
         "cpu.usage",
       ]),
     );
+    expect(metricData(exporter, "cpu.usage")?.descriptor.description).toBe(
+      "Current CPU usage",
+    );
+    const counter = metricData(exporter, "metric-service.requests.total");
+    expect(counter?.descriptor.unit).toBe("");
+    expect(counter?.descriptor.description).toBe("");
+  });
+
+  it("records histogram values into the configured semconv seconds buckets", async () => {
+    const meter = makeMeter(
+      meterConfig("metric-service", "http://collector:4318/v1/metrics"),
+    );
+
+    const histogram = meter.createHistogram("http.server.request.duration", {
+      description: "Duration of HTTP server requests",
+      unit: "s",
+      advice: { explicitBucketBoundaries: SEMCONV_HTTP_DURATION_BOUNDARIES },
+    });
+    for (const seconds of [0.005, 0.042, 0.08, 0.3, 1.2, 4.5]) {
+      histogram.record(seconds);
+    }
+
+    await meter.shutdown();
+
+    const metric = metricData(
+      lastExporter(),
+      "metric-service.http.server.request.duration",
+    );
+    expect(metric).toBeDefined();
+    expect(metric?.descriptor.description).toBe(
+      "Duration of HTTP server requests",
+    );
+    expect(metric?.descriptor.unit).toBe("s");
+    if (!metric || metric.dataPointType !== DataPointType.HISTOGRAM) {
+      throw new Error("expected a histogram metric");
+    }
+    const [dataPoint] = metric.dataPoints;
+    expect(dataPoint.value.count).toBe(6);
+    expect(dataPoint.value.buckets.boundaries).toEqual(
+      SEMCONV_HTTP_DURATION_BOUNDARIES,
+    );
+    expect(dataPoint.value.buckets.counts).toEqual([
+      1, 0, 0, 1, 0, 1, 0, 1, 0, 0, 1, 1, 0, 0, 0,
+    ]);
+  });
+
+  it("forwards description and unit options for counters and up-down counters", async () => {
+    const meter = makeMeter(
+      meterConfig("metric-service", "http://collector:4318/v1/metrics"),
+    );
+
+    meter
+      .createCounter("requests.total", {
+        description: "Total requests",
+        unit: "1",
+      })
+      .add(1);
+    meter
+      .createUpDownCounter("users.active", {
+        description: "Active users",
+        unit: "{user}",
+      })
+      .add(1);
+
+    await meter.shutdown();
+
+    const exporter = lastExporter();
+    const counter = metricData(exporter, "metric-service.requests.total");
+    expect(counter?.descriptor.description).toBe("Total requests");
+    expect(counter?.descriptor.unit).toBe("1");
+    const upDownCounter = metricData(exporter, "metric-service.users.active");
+    expect(upDownCounter?.descriptor.description).toBe("Active users");
+    expect(upDownCounter?.descriptor.unit).toBe("{user}");
+  });
+
+  it("accepts an options object for observable gauges and keeps them unprefixed", async () => {
+    const meter = makeMeter(
+      meterConfig("metric-service", "http://collector:4318/v1/metrics"),
+    );
+
+    meter.createObservableGauge(
+      "cpu.usage",
+      (observableResult) => observableResult.observe(0.5),
+      { description: "Current CPU usage", unit: "1" },
+    );
+
+    await meter.shutdown();
+
+    const exporter = lastExporter();
+    const names = metricNames(exporter);
+    expect(names).toContain("cpu.usage");
+    expect(names).not.toContain("metric-service.cpu.usage");
+    const gauge = metricData(exporter, "cpu.usage");
+    expect(gauge?.descriptor.description).toBe("Current CPU usage");
+    expect(gauge?.descriptor.unit).toBe("1");
   });
 
   it("creates a histogram without the service-name prefix when the unprefixed option is set", async () => {
