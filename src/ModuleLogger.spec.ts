@@ -1,8 +1,5 @@
 import type { Span } from "@opentelemetry/api";
-import {
-  SeverityNumber,
-  type Logger as OTelLogger,
-} from "@opentelemetry/api";
+import { SeverityNumber, type Logger as OTelLogger } from "@opentelemetry/api";
 import { ModuleLogger, type ModuleLoggerOptions } from "./ModuleLogger";
 import type { StandardLoggerInterface } from "./models/StandardLoggerInterface";
 
@@ -33,7 +30,11 @@ describe("ModuleLogger", () => {
 
   function loggerWithEmit(options?: ModuleLoggerOptions): ModuleLogger {
     const fakeLogger = { emit } as unknown as OTelLogger;
-    return new ModuleLogger("billing", createLogger(() => fakeLogger), options);
+    return new ModuleLogger(
+      "billing",
+      createLogger(() => fakeLogger),
+      options,
+    );
   }
 
   function lastAttributes(): Record<string, unknown> {
@@ -212,9 +213,7 @@ describe("ModuleLogger", () => {
         { consoleMode: "always" },
       );
       withoutLogger.info("without logger");
-      expect(logSpy).toHaveBeenCalledWith(
-        "[info] [billing] without logger",
-      );
+      expect(logSpy).toHaveBeenCalledWith("[info] [billing] without logger");
       expect(emit).toHaveBeenCalledTimes(1);
     });
 
@@ -229,9 +228,7 @@ describe("ModuleLogger", () => {
         { consoleMode: "fallback" },
       );
       withoutLogger.warn("without logger");
-      expect(warnSpy).toHaveBeenCalledWith(
-        "[warn] [billing] without logger",
-      );
+      expect(warnSpy).toHaveBeenCalledWith("[warn] [billing] without logger");
     });
 
     it("never disables console output while records are still emitted", () => {
@@ -246,7 +243,10 @@ describe("ModuleLogger", () => {
     });
 
     it("defaults to always when no options are given", () => {
-      new ModuleLogger("billing", createLogger(() => undefined)).info("legacy");
+      new ModuleLogger(
+        "billing",
+        createLogger(() => undefined),
+      ).info("legacy");
       expect(logSpy).toHaveBeenCalledWith("[info] [billing] legacy");
     });
   });

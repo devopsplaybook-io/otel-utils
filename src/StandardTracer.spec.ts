@@ -1,7 +1,9 @@
 import {
+  createTraceState,
   diag,
   DiagLogLevel,
   SpanKind,
+  TraceFlags,
   trace,
 } from "@opentelemetry/api";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
@@ -51,8 +53,7 @@ interface MockTraceExporter {
 const mockExporterConstructor = OTLPTraceExporter as unknown as jest.Mock;
 
 function exporterAt(index: number): MockTraceExporter {
-  return mockExporterConstructor.mock.results[index]
-    .value as MockTraceExporter;
+  return mockExporterConstructor.mock.results[index].value as MockTraceExporter;
 }
 
 function lastExporter(): MockTraceExporter {
@@ -68,10 +69,7 @@ function registeredTracerProvider(): unknown {
     : provider;
 }
 
-function tracerConfig(
-  serviceId: string,
-  url?: string,
-): ConfigOTelInterface {
+function tracerConfig(serviceId: string, url?: string): ConfigOTelInterface {
   return {
     SERVICE_ID: serviceId,
     VERSION: "1.0.0",
@@ -161,6 +159,25 @@ describe("StandardTracer", () => {
       child.end();
       parent.end();
     });
+
+    it("accepts an API span as the parent", () => {
+      const tracer = makeTracer(tracerConfig("test-service"));
+      const apiSpan = trace.wrapSpanContext({
+        traceId: "0af7651916cd43dd8448eb211c80319c",
+        spanId: "b7ad6b7169203331",
+        traceFlags: TraceFlags.SAMPLED,
+      });
+
+      const child = tracer.startSpan("child-operation", apiSpan);
+
+      expect(child.spanContext().traceId).toBe(
+        "0af7651916cd43dd8448eb211c80319c",
+      );
+      expect(child.parentSpanContext?.spanId).toBe("b7ad6b7169203331");
+      expect(child.attributes[ATTR_HTTP_REQUEST_METHOD]).toBeUndefined();
+      expect(child.attributes[ATTR_HTTP_ROUTE]).toBeUndefined();
+      child.end();
+    });
   });
 
   describe("updateHttpHeader", () => {
@@ -184,6 +201,20 @@ describe("StandardTracer", () => {
       expect(headers["x-custom"]).toBe("value");
       expect(headers["traceparent"]).toContain(span.spanContext().traceId);
       span.end();
+    });
+
+    it("injects tracestate and does not propagate baggage", () => {
+      const apiSpan = trace.wrapSpanContext({
+        traceId: "0af7651916cd43dd8448eb211c80319c",
+        spanId: "b7ad6b7169203331",
+        traceFlags: TraceFlags.SAMPLED,
+        traceState: createTraceState("vendor=opaque"),
+      });
+      const headers = StandardTracer.updateHttpHeader(apiSpan);
+
+      expect(headers.traceparent).toContain("0af7651916cd43dd8448eb211c80319c");
+      expect(headers.tracestate).toBe("vendor=opaque");
+      expect(headers.baggage).toBeUndefined();
     });
   });
 
@@ -262,7 +293,9 @@ describe("StandardTracer", () => {
       expect(secondSpans[0].resource.attributes["service.name"]).toBe("svc-2");
       expect(warnSpy).toHaveBeenCalledTimes(1);
       expect(warnSpy).toHaveBeenCalledWith(
-        expect.stringContaining("A global tracer provider is already registered"),
+        expect.stringContaining(
+          "A global tracer provider is already registered",
+        ),
       );
     });
 

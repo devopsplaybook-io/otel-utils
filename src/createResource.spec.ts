@@ -1,5 +1,9 @@
 import { createOTelResource } from "./utils/createResource";
-import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION, ATTR_NETWORK_LOCAL_ADDRESS } from "@opentelemetry/semantic-conventions";
+import {
+  ATTR_SERVICE_NAME,
+  ATTR_SERVICE_VERSION,
+  ATTR_NETWORK_LOCAL_ADDRESS,
+} from "@opentelemetry/semantic-conventions";
 
 describe("createOTelResource", () => {
   it("should create a resource with the provided service name and version", () => {

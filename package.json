@@ -1,6 +1,6 @@
 {
   "name": "@devopsplaybook.io/otel-utils",
-  "version": "1.8.0",
+  "version": "1.9.0",
   "description": "Utility to simplify integration with Open Telemetry",
   "keywords": [
     "Open",
@@ -14,11 +14,24 @@
   "type": "commonjs",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "build": "tsc && tsc -p tsconfig.spec.json --noEmit",
-    "lint": "oxlint src",
-    "test": "jest --coverage",
-    "dependencies": ""
+    "format": "prettier --write .",
+    "lint": "oxlint index.ts src && prettier --check .",
+    "test": "jest --coverage"
   },
   "dependencies": {
     "@opentelemetry/api": "^1.10.0",
@@ -39,9 +52,9 @@
     "@swc/jest": "^0.2.39",
     "@types/jest": "^30.0.0",
     "@types/node": "^26.6.5",
-    "@types/sqlite3": "^5.1.0",
     "jest": "^30.5.2",
     "oxlint": "^1.89.0",
+    "prettier": "^3.9.10",
     "typescript": "^7.0.2"
   },
   "publishConfig": {

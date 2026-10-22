@@ -6,12 +6,13 @@ import { ConfigOTelInterface } from "./models/ConfigOTelInterface";
 import { StandardLogger } from "./StandardLogger";
 
 jest.mock("@opentelemetry/sdk-logs", () => {
-  const actual =
-    jest.requireActual<typeof import("@opentelemetry/sdk-logs")>(
-      "@opentelemetry/sdk-logs",
-    );
+  const actual = jest.requireActual<typeof import("@opentelemetry/sdk-logs")>(
+    "@opentelemetry/sdk-logs",
+  );
   const batchProcessorOptions: unknown[] = [];
-  class RecordingBatchLogRecordProcessor extends actual.BatchLogRecordProcessor {
+  class RecordingBatchLogRecordProcessor
+    extends actual.BatchLogRecordProcessor
+  {
     constructor(
       options: ConstructorParameters<typeof actual.BatchLogRecordProcessor>[0],
     ) {
@@ -472,7 +473,9 @@ describe("StandardLogger", () => {
         OPENTELEMETRY_CONSOLE_LOG_MODE: "fallback",
       });
       withoutEndpoint.createModuleLogger("billing").warn("mirrored-fallback");
-      expect(warnSpy).toHaveBeenCalledWith("[warn] [billing] mirrored-fallback");
+      expect(warnSpy).toHaveBeenCalledWith(
+        "[warn] [billing] mirrored-fallback",
+      );
       await withoutEndpoint.shutdown();
     });
   });

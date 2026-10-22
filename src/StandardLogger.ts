@@ -106,7 +106,9 @@ export class StandardLogger implements StandardLoggerInterface {
   }
 
   public createModuleLogger(moduleName: string): ModuleLogger {
-    return new ModuleLogger(moduleName, this, { consoleMode: this.consoleMode });
+    return new ModuleLogger(moduleName, this, {
+      consoleMode: this.consoleMode,
+    });
   }
 
   private registerGlobalProvider(): void {
