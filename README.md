@@ -119,12 +119,55 @@ const cpuGauge = meter.createObservableGauge(
 );
 ```
 
+**Instrument options**
+
+All four factories accept an optional options argument with the standard OpenTelemetry `MetricOptions` — `description`, `unit`, `valueType` and `advice` — forwarded to the underlying `Meter`. `createObservableGauge` also keeps accepting a description string as its third argument.
+
+These options matter most for histograms: the SDK default bucket boundaries (`[0, 5, 10, 25, 50, 75, 100, 250, 500, 750, 1000, 2500, 5000, 7500, 10000]`) are millisecond-oriented. A consumer that records seconds with the defaults puts every value below 5 s into the first bucket, which makes percentiles meaningless. The OpenTelemetry semantic conventions for `http.server.request.duration` therefore expect seconds and these boundaries:
+
+```typescript
+const httpDuration = meter.createHistogram("http.server.request.duration", {
+  description: "Duration of HTTP server requests",
+  unit: "s",
+  advice: {
+    explicitBucketBoundaries: [
+      0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 7.5, 10,
+    ],
+  },
+});
+
+httpDuration.record(Number(process.hrtime.bigint() - startTime) / 1e9);
+```
+
+The other factories accept the same options:
+
+```typescript
+meter.createCounter("requests.total", {
+  description: "Total requests",
+  unit: "1",
+});
+
+meter.createObservableGauge(
+  "cpu.usage",
+  (result) => result.observe(cpuPercent),
+  { description: "Current CPU usage", unit: "1" },
+);
+```
+
+**Metric naming**
+
+- Counters, up-down counters and histograms are exported as `${serviceName}.${key}`.
+- A histogram created with `{ unprefixed: true }` is exported exactly as `key`; only histograms have this opt-out.
+- Observable gauges are always exported exactly as `key` (never prefixed), including when an options object is passed.
+
+These defaults are unchanged: existing metric names keep working.
+
 **Methods:**
 
-- `createCounter(key)` — Creates a `Counter` with name `${serviceName}.${key}`.
-- `createUpDownCounter(key)` — Creates an `UpDownCounter`.
-- `createHistogram(key, options?)` — Creates a `Histogram` named `${serviceName}.${key}`; with `{ unprefixed: true }` the histogram is created exactly as `key`, without the service-name prefix.
-- `createObservableGauge(key, callback, description?)` — Creates an `ObservableGauge` with a callback. Description is optional.
+- `createCounter(key, options?)` — Creates a `Counter` named `${serviceName}.${key}`.
+- `createUpDownCounter(key, options?)` — Creates an `UpDownCounter` named `${serviceName}.${key}`.
+- `createHistogram(key, options?)` — Creates a `Histogram` named `${serviceName}.${key}`; with `{ unprefixed: true }` the histogram is created exactly as `key`, without the service-name prefix. Options also accept the OTel instrument options (`description`, `unit`, `valueType`, `advice`).
+- `createObservableGauge(key, callback, descriptionOrOptions?)` — Creates an `ObservableGauge` named `key` with a callback. The third argument is an optional description string or an options object (`description`, `unit`, `valueType`, `advice`).
 - `shutdown()` — Flushes buffered metrics and shuts the meter provider down. Idempotent.
 
 ## Provider lifecycle
