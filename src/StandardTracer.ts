@@ -21,6 +21,7 @@ import {
   ATTR_HTTP_ROUTE,
 } from "@opentelemetry/semantic-conventions";
 import { ConfigOTelInterface } from "./models/ConfigOTelInterface";
+import { validateServiceIdentity } from "./utils/configValidation";
 import { createOTelResource } from "./utils/createResource";
 
 let globalTracerProvider: TracerProvider | undefined;
@@ -64,6 +65,7 @@ export class StandardTracer {
   private shutdownPromise?: Promise<void>;
 
   constructor(config: ConfigOTelInterface) {
+    validateServiceIdentity(config);
     this.serviceName = config.SERVICE_ID;
     this.serviceVersion = config.VERSION;
     const spanProcessors = [];

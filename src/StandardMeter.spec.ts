@@ -9,6 +9,38 @@ import {
 import { ConfigOTelInterface } from "./models/ConfigOTelInterface";
 import { StandardMeter } from "./StandardMeter";
 
+jest.mock("@opentelemetry/sdk-metrics", () => {
+  const actual =
+    jest.requireActual<typeof import("@opentelemetry/sdk-metrics")>(
+      "@opentelemetry/sdk-metrics",
+    );
+  const metricReaderOptions: unknown[] = [];
+  class RecordingPeriodicExportingMetricReader extends actual.PeriodicExportingMetricReader {
+    constructor(
+      options: ConstructorParameters<
+        typeof actual.PeriodicExportingMetricReader
+      >[0],
+    ) {
+      super(options);
+      metricReaderOptions.push(options);
+    }
+  }
+  return {
+    ...actual,
+    PeriodicExportingMetricReader: RecordingPeriodicExportingMetricReader,
+    __metricReaderOptions: metricReaderOptions,
+  };
+});
+
+interface SdkMetricsMock {
+  __metricReaderOptions: unknown[];
+}
+
+function metricReaderOptions(): unknown[] {
+  return (jest.requireMock("@opentelemetry/sdk-metrics") as SdkMetricsMock)
+    .__metricReaderOptions;
+}
+
 jest.mock("@opentelemetry/exporter-metrics-otlp-http", () => {
   const {
     AggregationTemporality,
@@ -80,6 +112,7 @@ describe("StandardMeter", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    metricReaderOptions().length = 0;
     metrics.disable();
     warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
   });
@@ -337,5 +370,77 @@ describe("StandardMeter", () => {
 
     expect(metricNames(exporterAt(1))).toContain("after-reinit");
     expect(shutdownSpy).toHaveBeenCalledTimes(1);
+  });
+
+  describe("export interval tuning", () => {
+    it("uses the documented default interval", async () => {
+      const meter = makeMeter(
+        meterConfig("metric-service", "http://collector:4318/v1/metrics"),
+      );
+
+      expect(metricReaderOptions()).toHaveLength(1);
+      expect(metricReaderOptions()[0]).toEqual({
+        exporter: expect.anything(),
+        exportIntervalMillis: 60000,
+      });
+      await meter.shutdown();
+    });
+
+    it.each([0, -5, 0.5])(
+      "clamps the export interval of %p seconds to one second",
+      async (interval) => {
+        const meter = makeMeter({
+          ...meterConfig("metric-service", "http://collector:4318/v1/metrics"),
+          OPENTELEMETRY_COLLECTOR_EXPORT_METRICS_INTERVAL_SECONDS: interval,
+        });
+
+        expect(
+          (metricReaderOptions()[0] as { exportIntervalMillis: number })
+            .exportIntervalMillis,
+        ).toBe(1000);
+        await meter.shutdown();
+      },
+    );
+
+    it("falls back to the default interval for a NaN value", async () => {
+      const meter = makeMeter({
+        ...meterConfig("metric-service", "http://collector:4318/v1/metrics"),
+        OPENTELEMETRY_COLLECTOR_EXPORT_METRICS_INTERVAL_SECONDS: NaN,
+      });
+
+      expect(
+        (metricReaderOptions()[0] as { exportIntervalMillis: number })
+          .exportIntervalMillis,
+      ).toBe(60000);
+      await meter.shutdown();
+    });
+  });
+
+  describe("service identity validation", () => {
+    it("rejects an empty SERVICE_ID without creating an exporter", () => {
+      expect(
+        () =>
+          new StandardMeter({
+            SERVICE_ID: "   ",
+            VERSION: "1.0.0",
+            OPENTELEMETRY_COLLECTOR_HTTP_METRICS:
+              "http://collector:4318/v1/metrics",
+          }),
+      ).toThrow("[otel-utils] SERVICE_ID must be a non-empty string");
+      expect(mockExporterConstructor).not.toHaveBeenCalled();
+    });
+
+    it("rejects an empty VERSION without creating an exporter", () => {
+      expect(
+        () =>
+          new StandardMeter({
+            SERVICE_ID: "metric-service",
+            VERSION: "",
+            OPENTELEMETRY_COLLECTOR_HTTP_METRICS:
+              "http://collector:4318/v1/metrics",
+          }),
+      ).toThrow("[otel-utils] VERSION must be a non-empty string");
+      expect(mockExporterConstructor).not.toHaveBeenCalled();
+    });
   });
 });

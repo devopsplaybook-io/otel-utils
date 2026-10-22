@@ -4,8 +4,17 @@ import {
   BatchLogRecordProcessor,
   LoggerProvider,
 } from "@opentelemetry/sdk-logs";
-import { ConfigOTelInterface } from "./models/ConfigOTelInterface";
+import type {
+  ConfigOTelInterface,
+  ConsoleLogMode,
+} from "./models/ConfigOTelInterface";
 import { createOTelResource } from "./utils/createResource";
+import {
+  normalizeConsoleLogMode,
+  normalizeExportIntervalSeconds,
+  normalizePositiveInteger,
+  validateServiceIdentity,
+} from "./utils/configValidation";
 import { ModuleLogger } from "./ModuleLogger";
 
 import type { StandardLoggerInterface } from "./models/StandardLoggerInterface";
@@ -22,8 +31,15 @@ export class StandardLogger implements StandardLoggerInterface {
   private serviceName?: string;
   private ownsGlobalProvider = false;
   private shutdownPromise?: Promise<void>;
+  private consoleMode: ConsoleLogMode = "always";
 
   public async initOTel(config: ConfigOTelInterface): Promise<void> {
+    // Validate before releasing the previous provider: a bad re-init must keep
+    // the working provider in place.
+    validateServiceIdentity(config);
+    this.consoleMode = normalizeConsoleLogMode(
+      config.OPENTELEMETRY_CONSOLE_LOG_MODE,
+    );
     // Re-initialisation flushes and unregisters the previous provider first.
     if (this.loggerProvider) {
       await this.releaseProvider();
@@ -50,10 +66,23 @@ export class StandardLogger implements StandardLoggerInterface {
       processors: [
         new BatchLogRecordProcessor({
           exporter,
-          maxQueueSize: 2048,
+          maxQueueSize: normalizePositiveInteger(
+            config.OPENTELEMETRY_COLLECTOR_EXPORT_LOGS_MAX_QUEUE_SIZE,
+            2048,
+          ),
+          maxExportBatchSize: normalizePositiveInteger(
+            config.OPENTELEMETRY_COLLECTOR_EXPORT_LOGS_MAX_BATCH_SIZE,
+            512,
+          ),
+          exportTimeoutMillis: normalizePositiveInteger(
+            config.OPENTELEMETRY_COLLECTOR_EXPORT_LOGS_TIMEOUT_MILLIS,
+            30000,
+          ),
           scheduledDelayMillis:
-            (config.OPENTELEMETRY_COLLECTOR_EXPORT_LOGS_INTERVAL_SECONDS ??
-              60) * 1000,
+            normalizeExportIntervalSeconds(
+              config.OPENTELEMETRY_COLLECTOR_EXPORT_LOGS_INTERVAL_SECONDS,
+              60,
+            ) * 1000,
         }),
       ],
       resource: createOTelResource(this.serviceName, this.serviceVersion),
@@ -77,7 +106,7 @@ export class StandardLogger implements StandardLoggerInterface {
   }
 
   public createModuleLogger(moduleName: string): ModuleLogger {
-    return new ModuleLogger(moduleName, this);
+    return new ModuleLogger(moduleName, this, { consoleMode: this.consoleMode });
   }
 
   private registerGlobalProvider(): void {

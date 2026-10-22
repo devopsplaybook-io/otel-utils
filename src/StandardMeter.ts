@@ -14,6 +14,10 @@ import {
   PeriodicExportingMetricReader,
 } from "@opentelemetry/sdk-metrics";
 import { ConfigOTelInterface } from "./models/ConfigOTelInterface";
+import {
+  normalizeExportIntervalSeconds,
+  validateServiceIdentity,
+} from "./utils/configValidation";
 
 let globalMeterProvider: MeterProvider | undefined;
 
@@ -43,6 +47,7 @@ export class StandardMeter {
   private shutdownPromise?: Promise<void>;
 
   constructor(config: ConfigOTelInterface) {
+    validateServiceIdentity(config);
     this.serviceName = config.SERVICE_ID;
     this.serviceVersion = config.VERSION;
     let hasCollector = false;
@@ -64,8 +69,10 @@ export class StandardMeter {
           new PeriodicExportingMetricReader({
             exporter: metricExporter,
             exportIntervalMillis:
-              (config.OPENTELEMETRY_COLLECTOR_EXPORT_METRICS_INTERVAL_SECONDS ??
-                60) * 1000,
+              normalizeExportIntervalSeconds(
+                config.OPENTELEMETRY_COLLECTOR_EXPORT_METRICS_INTERVAL_SECONDS,
+                60,
+              ) * 1000,
           }),
         ],
       });

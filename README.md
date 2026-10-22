@@ -10,18 +10,26 @@ npm install @devopsplaybook.io/otel-utils
 
 ## Configuration
 
-All classes accept a `ConfigOTelInterface` object:
+All classes accept a `ConfigOTelInterface` object. The fields mirror environment variables in the consuming application (for example `common-utils`' `ConfigBase`); the library itself does not read `process.env`.
 
-| Field                                                     | Type       | Default | Description                     |
-| --------------------------------------------------------- | ---------- | ------- | ------------------------------- |
-| `SERVICE_ID`                                              | `string`   | —       | Service identifier (required)   |
-| `VERSION`                                                 | `string`   | —       | Service version (required)      |
-| `OPENTELEMETRY_COLLECTOR_HTTP_TRACES`                     | `string?`  | —       | OTLP HTTP endpoint for traces   |
-| `OPENTELEMETRY_COLLECTOR_HTTP_METRICS`                    | `string?`  | —       | OTLP HTTP endpoint for metrics  |
-| `OPENTELEMETRY_COLLECTOR_HTTP_LOGS`                       | `string?`  | —       | OTLP HTTP endpoint for logs     |
-| `OPENTELEMETRY_COLLECTOR_EXPORT_LOGS_INTERVAL_SECONDS`    | `number?`  | `60`    | Log export interval             |
-| `OPENTELEMETRY_COLLECTOR_EXPORT_METRICS_INTERVAL_SECONDS` | `number?`  | `60`    | Metrics export interval         |
-| `OPENTELEMETRY_COLLECT_AUTHORIZATION_HEADER`              | `string?`  | —       | Bearer token for collector auth |
+| Field                                                     | Type                                | Default    | Description                                        |
+| --------------------------------------------------------- | ----------------------------------- | ---------- | -------------------------------------------------- |
+| `SERVICE_ID`                                              | `string`                            | —          | Service identifier (required, non-empty)           |
+| `VERSION`                                                 | `string`                            | —          | Service version (required, non-empty)              |
+| `OPENTELEMETRY_COLLECTOR_HTTP_TRACES`                     | `string?`                           | —          | OTLP HTTP endpoint for traces                      |
+| `OPENTELEMETRY_COLLECTOR_HTTP_METRICS`                    | `string?`                           | —          | OTLP HTTP endpoint for metrics                     |
+| `OPENTELEMETRY_COLLECTOR_HTTP_LOGS`                       | `string?`                           | —          | OTLP HTTP endpoint for logs                        |
+| `OPENTELEMETRY_COLLECTOR_EXPORT_LOGS_INTERVAL_SECONDS`    | `number?`                           | `60`       | Log export interval in seconds (clamped to ≥ 1)    |
+| `OPENTELEMETRY_COLLECTOR_EXPORT_METRICS_INTERVAL_SECONDS` | `number?`                           | `60`       | Metrics export interval in seconds (clamped to ≥ 1) |
+| `OPENTELEMETRY_COLLECTOR_EXPORT_LOGS_MAX_QUEUE_SIZE`      | `number?`                           | `2048`     | Max log records buffered before export             |
+| `OPENTELEMETRY_COLLECTOR_EXPORT_LOGS_MAX_BATCH_SIZE`      | `number?`                           | `512`      | Max log records per export batch                   |
+| `OPENTELEMETRY_COLLECTOR_EXPORT_LOGS_TIMEOUT_MILLIS`      | `number?`                           | `30000`    | Log export timeout in milliseconds                 |
+| `OPENTELEMETRY_CONSOLE_LOG_MODE`                          | `"always" \| "fallback" \| "never"` | `"always"` | Console mirroring mode for `ModuleLogger`          |
+| `OPENTELEMETRY_COLLECT_AUTHORIZATION_HEADER`              | `string?`                           | —          | Bearer token for collector auth                    |
+
+`SERVICE_ID` and `VERSION` must be non-empty strings. `StandardTracer`/`StandardMeter` constructors and `StandardLogger.initOTel` fail fast with `[otel-utils] SERVICE_ID must be a non-empty string` / `[otel-utils] VERSION must be a non-empty string` otherwise. A failed re-initialisation of `StandardLogger` keeps the previous provider in place.
+
+Numeric export intervals below 1 s (including `0` and negative values from an empty environment variable) are clamped to 1 s; `NaN`/`Infinity` fall back to the 60 s default. Non-positive or non-integer batch values fall back to their defaults.
 
 When a collector endpoint is not provided, the corresponding signal (traces, logs, or metrics) is initialized with no export: traces and metrics still have a local provider but no data is sent, and `StandardLogger` creates no provider (its `getLogger()` returns `undefined`).
 
@@ -55,7 +63,7 @@ span.end();
 
 ### StandardLogger
 
-Initializes a `LoggerProvider` with an OTLP log exporter and a `BatchLogRecordProcessor` (`maxQueueSize: 2048`). When `OPENTELEMETRY_COLLECTOR_HTTP_LOGS` is set, the provider is also registered as the global OTel logger provider (first instance only), so `logs.getLogger(...)` from `@opentelemetry/api` returns loggers wired to the configured exporter. Each instance always logs through its own provider (`logger.createModuleLogger(...)`), so a second instance never mis-routes its records to the first one. Without that endpoint, `initOTel` still records the service identity but creates no provider and `getLogger()` returns `undefined`.
+Initializes a `LoggerProvider` with an OTLP log exporter and a `BatchLogRecordProcessor` (`maxQueueSize: 2048`, `maxExportBatchSize: 512`, `exportTimeoutMillis: 30000`, `scheduledDelayMillis: 60000` by default). When `OPENTELEMETRY_COLLECTOR_HTTP_LOGS` is set, the provider is also registered as the global OTel logger provider (first instance only), so `logs.getLogger(...)` from `@opentelemetry/api` returns loggers wired to the configured exporter. Each instance always logs through its own provider (`logger.createModuleLogger(...)`), so a second instance never mis-routes its records to the first one. Without that endpoint, `initOTel` still records the service identity but creates no provider and `getLogger()` returns `undefined`.
 
 ```typescript
 import { StandardLogger } from "@devopsplaybook.io/otel-utils";
@@ -74,15 +82,47 @@ moduleLog.info("Hello world");
 - `createModuleLogger(moduleName)` — Creates a `ModuleLogger` scoped to a module name.
 - `shutdown()` — Flushes buffered log records and shuts the logger provider down. Idempotent. No-op when no logs endpoint is configured.
 
+**Batch tunables and loss window**
+
+`BatchLogRecordProcessor` buffers records in memory and exports them periodically:
+
+| Option               | Config field                                           | Default    |
+| -------------------- | ------------------------------------------------------ | ---------- |
+| `scheduledDelayMillis` | `OPENTELEMETRY_COLLECTOR_EXPORT_LOGS_INTERVAL_SECONDS` | 60000 ms   |
+| `maxQueueSize`       | `OPENTELEMETRY_COLLECTOR_EXPORT_LOGS_MAX_QUEUE_SIZE`   | 2048       |
+| `maxExportBatchSize` | `OPENTELEMETRY_COLLECTOR_EXPORT_LOGS_MAX_BATCH_SIZE`   | 512        |
+| `exportTimeoutMillis` | `OPENTELEMETRY_COLLECTOR_EXPORT_LOGS_TIMEOUT_MILLIS`  | 30000 ms   |
+
+A record waits up to `scheduledDelayMillis` (60 s by default) before it is exported; each export sends at most `maxExportBatchSize` (512) records with a 30 s timeout, and at most `maxQueueSize` (2048) records are buffered. Records that arrive while the queue is full are **dropped silently** — no warning or fallback is emitted. A crash or restart loses every record buffered since the last export; call `shutdown()` or use `registerShutdownHooks` (see [Graceful shutdown](#graceful-shutdown)) to flush them. Keep `maxExportBatchSize` ≤ `maxQueueSize` (the SDK clamps it otherwise).
+
+```typescript
+await logger.initOTel({
+  ...config,
+  OPENTELEMETRY_COLLECTOR_EXPORT_LOGS_INTERVAL_SECONDS: 5,
+  OPENTELEMETRY_COLLECTOR_EXPORT_LOGS_MAX_QUEUE_SIZE: 4096,
+  OPENTELEMETRY_COLLECTOR_EXPORT_LOGS_MAX_BATCH_SIZE: 512,
+  OPENTELEMETRY_COLLECTOR_EXPORT_LOGS_TIMEOUT_MILLIS: 10000,
+});
+```
+
 ### ModuleLogger
 
-Scoped logger that prefixes all output with a module name. Logs to both `console.log` and (when available) the OTel Logger.
+Scoped logger that prefixes all output with a module name. Every record carries a `log.module` attribute in addition to the `[module] message` body. Records are emitted to the OTel logger when one is available, and can additionally be mirrored to the console, controlled by `OPENTELEMETRY_CONSOLE_LOG_MODE`:
+
+| Mode                | Behaviour                                                                                     |
+| ------------------- | --------------------------------------------------------------------------------------------- |
+| `always` (default)  | Mirror every record to the console, whether or not OTel logging is configured.                |
+| `fallback`          | Mirror only when no OTel logger is configured (`OPENTELEMETRY_COLLECTOR_HTTP_LOGS` unset).    |
+| `never`             | Never write to the console; records only go to OTel.                                          |
+
+Mirroring is level-aware: `info` uses `console.log`, `warn` uses `console.warn` and `error` uses `console.error` (stderr), so stderr-based alerting sees warnings and errors. An invalid mode value logs one `console.warn` and falls back to `always`. With `never`, a `ModuleLogger` writes nothing to the console even when no OTel logger is configured.
 
 ```typescript
 const log = logger.createModuleLogger("api");
 log.info("request received");
 log.warn("rate limit approaching");
 log.error("connection failed", new Error("timeout"));
+log.error("connection failed", "timeout"); // any unknown value is normalised
 log.info("processing complete", activeSpan); // attach trace context
 ```
 
@@ -90,7 +130,7 @@ log.info("processing complete", activeSpan); // attach trace context
 
 - `info(message, context?)` — Log at INFO level.
 - `warn(message, context?)` — Log at WARN level.
-- `error(message, error?, context?)` — Log at ERROR level with optional `Error` and span context. Attaches `exception.type`, `exception.message`, and `exception.stacktrace` attributes.
+- `error(message, error?, context?)` — Log at ERROR level. `error` accepts any value: `Error` instances are kept as-is, strings become `new Error(string)` and other values are serialised with `JSON.stringify` (falling back to `String`). `exception.type` and `exception.message` are always set; `exception.stacktrace` is set only when the error has a stack. `null`/`undefined` add no exception attributes. A `Span` passed as the second argument is treated as the context, so `error("failed", span)` and `error("failed", err, span)` both work.
 
 When a `Span` is passed as `context`, the log record includes `span.id` and `trace.id` attributes for trace correlation.
 
