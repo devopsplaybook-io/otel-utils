@@ -2,6 +2,7 @@ import {
   Counter,
   Histogram,
   Meter,
+  metrics,
   ObservableGauge,
   UpDownCounter,
 } from "@opentelemetry/api";
@@ -12,6 +13,11 @@ import {
   PeriodicExportingMetricReader,
 } from "@opentelemetry/sdk-metrics";
 import { ConfigOTelInterface } from "./models/ConfigOTelInterface";
+
+let globalMeterProvider: MeterProvider | undefined;
+
+const ALREADY_REGISTERED_WARNING =
+  "[otel-utils] A global meter provider is already registered; StandardMeter will not replace it. This instance still records metrics through its own provider, but metrics.getMeter() keeps using the existing provider.";
 
 /**
  * Options accepted by {@link StandardMeter.createHistogram}.
@@ -29,11 +35,15 @@ export class StandardMeter {
   private meterProvider: MeterProvider;
   private serviceVersion: string;
   private serviceName: string;
+  private ownsGlobalProvider = false;
+  private shutdownPromise?: Promise<void>;
 
   constructor(config: ConfigOTelInterface) {
     this.serviceName = config.SERVICE_ID;
     this.serviceVersion = config.VERSION;
+    let hasCollector = false;
     if (config.OPENTELEMETRY_COLLECTOR_HTTP_METRICS) {
+      hasCollector = true;
       const collectorOptions = {
         url: config.OPENTELEMETRY_COLLECTOR_HTTP_METRICS,
         headers: {} as Record<string, string>,
@@ -63,10 +73,16 @@ export class StandardMeter {
     this.meter = this.meterProvider.getMeter(
       `${this.serviceName}:${this.serviceVersion}`,
     );
+    if (hasCollector) {
+      this.registerGlobalProvider();
+    }
   }
 
-  public async shutdown(): Promise<void> {
-    await this.meterProvider.shutdown();
+  public shutdown(): Promise<void> {
+    if (!this.shutdownPromise) {
+      this.shutdownPromise = this.doShutdown();
+    }
+    return this.shutdownPromise;
   }
 
   public createCounter(key: string): Counter {
@@ -98,5 +114,36 @@ export class StandardMeter {
     );
     observableGauge.addCallback(callback);
     return observableGauge;
+  }
+
+  private registerGlobalProvider(): void {
+    if (globalMeterProvider) {
+      if (globalMeterProvider === metrics.getMeterProvider()) {
+        console.warn(ALREADY_REGISTERED_WARNING);
+        return;
+      }
+      // The previous provider is no longer registered (disabled elsewhere).
+      globalMeterProvider = undefined;
+    }
+    if (metrics.setGlobalMeterProvider(this.meterProvider)) {
+      globalMeterProvider = this.meterProvider;
+      this.ownsGlobalProvider = true;
+    } else {
+      console.warn(ALREADY_REGISTERED_WARNING);
+    }
+  }
+
+  private async doShutdown(): Promise<void> {
+    await this.meterProvider.shutdown();
+    if (
+      this.ownsGlobalProvider &&
+      metrics.getMeterProvider() === this.meterProvider
+    ) {
+      metrics.disable();
+    }
+    if (globalMeterProvider === this.meterProvider) {
+      globalMeterProvider = undefined;
+    }
+    this.ownsGlobalProvider = false;
   }
 }
