@@ -1,4 +1,4 @@
-import { logs, type Logger as OTelLogger } from "@opentelemetry/api-logs";
+import { logs, type Logger as OTelLogger } from "@opentelemetry/api";
 import { OTLPLogExporter } from "@opentelemetry/exporter-logs-otlp-http";
 import {
   BatchLogRecordProcessor,

@@ -1,4 +1,4 @@
-import { logs, SeverityNumber } from "@opentelemetry/api-logs";
+import { logs, SeverityNumber } from "@opentelemetry/api";
 import { OTLPLogExporter } from "@opentelemetry/exporter-logs-otlp-http";
 import { LoggerProvider } from "@opentelemetry/sdk-logs";
 import { StandardLogger } from "./StandardLogger";
@@ -91,7 +91,7 @@ describe("StandardLogger", () => {
     await logger.shutdown();
   });
 
-  it("flushes api-logs and module logger records on shutdown", async () => {
+  it("flushes OTel logs and module logger records on shutdown", async () => {
     const logger = new StandardLogger();
     logger.initOTel({
       ...collectorConfig("http://collector:4318/v1/logs"),
