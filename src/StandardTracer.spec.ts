@@ -225,6 +225,20 @@ describe("StandardTracer", () => {
     });
   });
 
+  describe("service identity validation", () => {
+    it("rejects an empty SERVICE_ID", () => {
+      expect(
+        () => new StandardTracer({ SERVICE_ID: "   ", VERSION: "1.0.0" }),
+      ).toThrow("[otel-utils] SERVICE_ID must be a non-empty string");
+    });
+
+    it("rejects an empty VERSION", () => {
+      expect(
+        () => new StandardTracer({ SERVICE_ID: "test-service", VERSION: "" }),
+      ).toThrow("[otel-utils] VERSION must be a non-empty string");
+    });
+  });
+
   describe("provider ownership and global registration", () => {
     it("routes each instance to its own exporter and resource", async () => {
       const first = makeTracer(
