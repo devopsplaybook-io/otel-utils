@@ -104,7 +104,10 @@ export class StandardMeter {
     key: string,
     options?: MetricOptions,
   ): UpDownCounter {
-    return this.meter.createUpDownCounter(`${this.serviceName}.${key}`, options);
+    return this.meter.createUpDownCounter(
+      `${this.serviceName}.${key}`,
+      options,
+    );
   }
 
   public createHistogram(

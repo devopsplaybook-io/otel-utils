@@ -8,24 +8,26 @@ Utility library that simplifies OpenTelemetry integration for Node.js services. 
 npm install @devopsplaybook.io/otel-utils
 ```
 
+Requires Node.js 22 or newer (`engines` in `package.json`).
+
 ## Configuration
 
 All classes accept a `ConfigOTelInterface` object. The fields mirror environment variables in the consuming application (for example `common-utils`' `ConfigBase`); the library itself does not read `process.env`.
 
-| Field                                                     | Type                                | Default    | Description                                        |
-| --------------------------------------------------------- | ----------------------------------- | ---------- | -------------------------------------------------- |
-| `SERVICE_ID`                                              | `string`                            | —          | Service identifier (required, non-empty)           |
-| `VERSION`                                                 | `string`                            | —          | Service version (required, non-empty)              |
-| `OPENTELEMETRY_COLLECTOR_HTTP_TRACES`                     | `string?`                           | —          | OTLP HTTP endpoint for traces                      |
-| `OPENTELEMETRY_COLLECTOR_HTTP_METRICS`                    | `string?`                           | —          | OTLP HTTP endpoint for metrics                     |
-| `OPENTELEMETRY_COLLECTOR_HTTP_LOGS`                       | `string?`                           | —          | OTLP HTTP endpoint for logs                        |
-| `OPENTELEMETRY_COLLECTOR_EXPORT_LOGS_INTERVAL_SECONDS`    | `number?`                           | `60`       | Log export interval in seconds (clamped to ≥ 1)    |
+| Field                                                     | Type                                | Default    | Description                                         |
+| --------------------------------------------------------- | ----------------------------------- | ---------- | --------------------------------------------------- |
+| `SERVICE_ID`                                              | `string`                            | —          | Service identifier (required, non-empty)            |
+| `VERSION`                                                 | `string`                            | —          | Service version (required, non-empty)               |
+| `OPENTELEMETRY_COLLECTOR_HTTP_TRACES`                     | `string?`                           | —          | OTLP HTTP endpoint for traces                       |
+| `OPENTELEMETRY_COLLECTOR_HTTP_METRICS`                    | `string?`                           | —          | OTLP HTTP endpoint for metrics                      |
+| `OPENTELEMETRY_COLLECTOR_HTTP_LOGS`                       | `string?`                           | —          | OTLP HTTP endpoint for logs                         |
+| `OPENTELEMETRY_COLLECTOR_EXPORT_LOGS_INTERVAL_SECONDS`    | `number?`                           | `60`       | Log export interval in seconds (clamped to ≥ 1)     |
 | `OPENTELEMETRY_COLLECTOR_EXPORT_METRICS_INTERVAL_SECONDS` | `number?`                           | `60`       | Metrics export interval in seconds (clamped to ≥ 1) |
-| `OPENTELEMETRY_COLLECTOR_EXPORT_LOGS_MAX_QUEUE_SIZE`      | `number?`                           | `2048`     | Max log records buffered before export             |
-| `OPENTELEMETRY_COLLECTOR_EXPORT_LOGS_MAX_BATCH_SIZE`      | `number?`                           | `512`      | Max log records per export batch                   |
-| `OPENTELEMETRY_COLLECTOR_EXPORT_LOGS_TIMEOUT_MILLIS`      | `number?`                           | `30000`    | Log export timeout in milliseconds                 |
-| `OPENTELEMETRY_CONSOLE_LOG_MODE`                          | `"always" \| "fallback" \| "never"` | `"always"` | Console mirroring mode for `ModuleLogger`          |
-| `OPENTELEMETRY_COLLECT_AUTHORIZATION_HEADER`              | `string?`                           | —          | Bearer token for collector auth                    |
+| `OPENTELEMETRY_COLLECTOR_EXPORT_LOGS_MAX_QUEUE_SIZE`      | `number?`                           | `2048`     | Max log records buffered before export              |
+| `OPENTELEMETRY_COLLECTOR_EXPORT_LOGS_MAX_BATCH_SIZE`      | `number?`                           | `512`      | Max log records per export batch                    |
+| `OPENTELEMETRY_COLLECTOR_EXPORT_LOGS_TIMEOUT_MILLIS`      | `number?`                           | `30000`    | Log export timeout in milliseconds                  |
+| `OPENTELEMETRY_CONSOLE_LOG_MODE`                          | `"always" \| "fallback" \| "never"` | `"always"` | Console mirroring mode for `ModuleLogger`           |
+| `OPENTELEMETRY_COLLECT_AUTHORIZATION_HEADER`              | `string?`                           | —          | Bearer token for collector auth                     |
 
 `SERVICE_ID` and `VERSION` must be non-empty strings. `StandardTracer`/`StandardMeter` constructors and `StandardLogger.initOTel` fail fast with `[otel-utils] SERVICE_ID must be a non-empty string` / `[otel-utils] VERSION must be a non-empty string` otherwise. A failed re-initialisation of `StandardLogger` keeps the previous provider in place.
 
@@ -57,8 +59,8 @@ span.end();
 
 **Methods:**
 
-- `startSpan(name, parentSpan?, options?)` — Creates a span. Span names are sanitized to `[a-zA-Z0-9-_/]`. When neither `parentSpan` nor `options` is given, the span is `SpanKind.INTERNAL` and carries `http.request_method=BACKEND` and a synthetic `http.route` attribute. Passing `options` (e.g. `{ kind: SpanKind.SERVER }`) forwards them to the OpenTelemetry SDK instead and skips those synthetic attributes, because the caller then describes the span itself.
-- `static updateHttpHeader(context, headers?)` — Injects W3C trace context into an HTTP headers object for propagation to downstream services.
+- `startSpan(name, parentSpan?, options?)` — Creates a span and returns the SDK `Span` from `@opentelemetry/sdk-trace`. Span names are sanitized to `[a-zA-Z0-9-_/]`. `parentSpan` accepts any API `Span` (for example from `trace.getSpan(context)` or `trace.wrapSpanContext(...)`), so callers need no cast. When neither `parentSpan` nor `options` is given, the span is `SpanKind.INTERNAL` and carries `http.request.method=BACKEND` and a synthetic `http.route` attribute with the value `${serviceName}-${version}-${sanitizedSpanName}`. Passing a `parentSpan`, an `options` object (e.g. `{ kind: SpanKind.SERVER }`), or both forwards them to the OpenTelemetry SDK instead and skips those synthetic attributes, because the caller then describes the span itself. Generic HTTP dashboards that group by `http.request.method`/`http.route` count these spans as `BACKEND` requests with a synthetic route; this is intentional and consumed by otel-light.
+- `static updateHttpHeader<T extends object = Record<string, string>>(context, headers?)` — Injects the W3C trace context of `context` into an HTTP headers object for propagation to downstream services, and returns that same object (a new one when omitted). Only `traceparent` and `tracestate` are injected: the propagation context is built from the span alone, so baggage and other active-context values are **not** propagated and an existing `baggage` header is left untouched.
 - `shutdown()` — Flushes buffered spans and shuts the tracer provider down. Idempotent.
 
 ### StandardLogger
@@ -86,12 +88,12 @@ moduleLog.info("Hello world");
 
 `BatchLogRecordProcessor` buffers records in memory and exports them periodically:
 
-| Option               | Config field                                           | Default    |
-| -------------------- | ------------------------------------------------------ | ---------- |
-| `scheduledDelayMillis` | `OPENTELEMETRY_COLLECTOR_EXPORT_LOGS_INTERVAL_SECONDS` | 60000 ms   |
-| `maxQueueSize`       | `OPENTELEMETRY_COLLECTOR_EXPORT_LOGS_MAX_QUEUE_SIZE`   | 2048       |
-| `maxExportBatchSize` | `OPENTELEMETRY_COLLECTOR_EXPORT_LOGS_MAX_BATCH_SIZE`   | 512        |
-| `exportTimeoutMillis` | `OPENTELEMETRY_COLLECTOR_EXPORT_LOGS_TIMEOUT_MILLIS`  | 30000 ms   |
+| Option                 | Config field                                           | Default  |
+| ---------------------- | ------------------------------------------------------ | -------- |
+| `scheduledDelayMillis` | `OPENTELEMETRY_COLLECTOR_EXPORT_LOGS_INTERVAL_SECONDS` | 60000 ms |
+| `maxQueueSize`         | `OPENTELEMETRY_COLLECTOR_EXPORT_LOGS_MAX_QUEUE_SIZE`   | 2048     |
+| `maxExportBatchSize`   | `OPENTELEMETRY_COLLECTOR_EXPORT_LOGS_MAX_BATCH_SIZE`   | 512      |
+| `exportTimeoutMillis`  | `OPENTELEMETRY_COLLECTOR_EXPORT_LOGS_TIMEOUT_MILLIS`   | 30000 ms |
 
 A record waits up to `scheduledDelayMillis` (60 s by default) before it is exported; each export sends at most `maxExportBatchSize` (512) records with a 30 s timeout, and at most `maxQueueSize` (2048) records are buffered. Records that arrive while the queue is full are **dropped silently** — no warning or fallback is emitted. A crash or restart loses every record buffered since the last export; call `shutdown()` or use `registerShutdownHooks` (see [Graceful shutdown](#graceful-shutdown)) to flush them. Keep `maxExportBatchSize` ≤ `maxQueueSize` (the SDK clamps it otherwise).
 
@@ -109,11 +111,11 @@ await logger.initOTel({
 
 Scoped logger that prefixes all output with a module name. Every record carries a `log.module` attribute in addition to the `[module] message` body. Records are emitted to the OTel logger when one is available, and can additionally be mirrored to the console, controlled by `OPENTELEMETRY_CONSOLE_LOG_MODE`:
 
-| Mode                | Behaviour                                                                                     |
-| ------------------- | --------------------------------------------------------------------------------------------- |
-| `always` (default)  | Mirror every record to the console, whether or not OTel logging is configured.                |
-| `fallback`          | Mirror only when no OTel logger is configured (`OPENTELEMETRY_COLLECTOR_HTTP_LOGS` unset).    |
-| `never`             | Never write to the console; records only go to OTel.                                          |
+| Mode               | Behaviour                                                                                  |
+| ------------------ | ------------------------------------------------------------------------------------------ |
+| `always` (default) | Mirror every record to the console, whether or not OTel logging is configured.             |
+| `fallback`         | Mirror only when no OTel logger is configured (`OPENTELEMETRY_COLLECTOR_HTTP_LOGS` unset). |
+| `never`            | Never write to the console; records only go to OTel.                                       |
 
 Mirroring is level-aware: `info` uses `console.log`, `warn` uses `console.warn` and `error` uses `console.error` (stderr), so stderr-based alerting sees warnings and errors. An invalid mode value logs one `console.warn` and falls back to `always`. With `never`, a `ModuleLogger` writes nothing to the console even when no OTel logger is configured.
 
@@ -272,8 +274,8 @@ All three signals share the same service identity (name + version) and resource 
 
 ## Dependencies
 
-- `@opentelemetry/api` / `@opentelemetry/api-logs` — OpenTelemetry API interfaces
-- `@opentelemetry/sdk-trace-node` / `@opentelemetry/sdk-trace-base` — Tracing SDK
+- `@opentelemetry/api` — OpenTelemetry API interfaces
+- `@opentelemetry/sdk-trace` — Tracing SDK
 - `@opentelemetry/sdk-metrics` — Metrics SDK
 - `@opentelemetry/sdk-logs` — Logging SDK
 - `@opentelemetry/exporter-trace-otlp-http` / `@opentelemetry/exporter-metrics-otlp-http` / `@opentelemetry/exporter-logs-otlp-http` — OTLP HTTP exporters
@@ -282,8 +284,13 @@ All three signals share the same service identity (name + version) and resource 
 - `@opentelemetry/core` — W3C trace context propagation
 - `@opentelemetry/resources` / `@opentelemetry/semantic-conventions` — Resource attributes
 
+Dev-only `npm audit` advisories (such as those previously reported in the Jest toolchain via `js-yaml`/`sprintf-js`) are tracked by the regular dependency-update task, not addressed here. The current lockfile reports no vulnerabilities, with or without dev dependencies.
+
 ## Build
 
 ```bash
-npm run build   # tsc → dist/
+npm ci          # install the locked dependencies
+npm run build   # tsc → dist/, then type-check the specs
+npm run lint    # oxlint + Prettier check
+npm test        # Jest unit tests with coverage
 ```

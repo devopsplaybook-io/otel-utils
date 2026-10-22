@@ -10,12 +10,13 @@ import { ConfigOTelInterface } from "./models/ConfigOTelInterface";
 import { StandardMeter } from "./StandardMeter";
 
 jest.mock("@opentelemetry/sdk-metrics", () => {
-  const actual =
-    jest.requireActual<typeof import("@opentelemetry/sdk-metrics")>(
-      "@opentelemetry/sdk-metrics",
-    );
+  const actual = jest.requireActual<
+    typeof import("@opentelemetry/sdk-metrics")
+  >("@opentelemetry/sdk-metrics");
   const metricReaderOptions: unknown[] = [];
-  class RecordingPeriodicExportingMetricReader extends actual.PeriodicExportingMetricReader {
+  class RecordingPeriodicExportingMetricReader
+    extends actual.PeriodicExportingMetricReader
+  {
     constructor(
       options: ConstructorParameters<
         typeof actual.PeriodicExportingMetricReader
@@ -42,12 +43,9 @@ function metricReaderOptions(): unknown[] {
 }
 
 jest.mock("@opentelemetry/exporter-metrics-otlp-http", () => {
-  const {
-    AggregationTemporality,
-    InMemoryMetricExporter,
-  } = jest.requireActual<typeof import("@opentelemetry/sdk-metrics")>(
-    "@opentelemetry/sdk-metrics",
-  );
+  const { AggregationTemporality, InMemoryMetricExporter } = jest.requireActual<
+    typeof import("@opentelemetry/sdk-metrics")
+  >("@opentelemetry/sdk-metrics");
   return {
     OTLPMetricExporter: jest.fn().mockImplementation(function () {
       return new InMemoryMetricExporter(AggregationTemporality.CUMULATIVE);
@@ -89,10 +87,7 @@ const SEMCONV_HTTP_DURATION_BOUNDARIES = [
   0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 7.5, 10,
 ];
 
-function meterConfig(
-  serviceId: string,
-  url?: string,
-): ConfigOTelInterface {
+function meterConfig(serviceId: string, url?: string): ConfigOTelInterface {
   return {
     SERVICE_ID: serviceId,
     VERSION: "1.0.0",

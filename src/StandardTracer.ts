@@ -105,7 +105,7 @@ export class StandardTracer {
 
   public startSpan(
     name: string,
-    parentSpan?: Span,
+    parentSpan?: ApiSpan,
     options?: StandardTracerStartSpanOptions,
   ): Span {
     const sanitizedName = name.replace(
@@ -131,12 +131,19 @@ export class StandardTracer {
     return span;
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  public static updateHttpHeader(context: ApiSpan, headers = {}): any {
+  /**
+   * Injects the W3C trace context of `context` into `headers` and returns it.
+   *
+   * The propagation context is built from the span alone (ROOT_CONTEXT), so
+   * only traceparent/tracestate are injected; baggage is not propagated.
+   */
+  public static updateHttpHeader<T extends object = Record<string, string>>(
+    context: ApiSpan,
+    headers: T = {} as T,
+  ): T {
     StandardTracer.PROPAGATOR.inject(
       trace.setSpanContext(ROOT_CONTEXT, context.spanContext()),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      headers as any,
+      headers,
       defaultTextMapSetter,
     );
     return headers;
