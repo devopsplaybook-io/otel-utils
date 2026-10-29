@@ -1,6 +1,6 @@
 {
   "name": "@devopsplaybook.io/otel-utils",
-  "version": "1.9.0",
+  "version": "1.9.1",
   "description": "Utility to simplify integration with Open Telemetry",
   "keywords": [
     "Open",
@@ -45,15 +45,15 @@
     "@opentelemetry/sdk-logs": "^3.0.0",
     "@opentelemetry/sdk-metrics": "^3.0.0",
     "@opentelemetry/sdk-trace": "^3.0.0",
-    "@opentelemetry/semantic-conventions": "^1.43.0"
+    "@opentelemetry/semantic-conventions": "^1.44.0"
   },
   "devDependencies": {
     "@swc/core": "^1.16.20",
     "@swc/jest": "^0.2.39",
     "@types/jest": "^30.0.0",
-    "@types/node": "^26.6.5",
+    "@types/node": "^26.6.6",
     "jest": "^30.5.2",
-    "oxlint": "^1.89.0",
+    "oxlint": "^1.90.0",
     "prettier": "^3.9.10",
     "typescript": "^7.0.2"
   },
