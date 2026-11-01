@@ -18,6 +18,7 @@ import {
   validateServiceIdentity,
 } from "./utils/configValidation";
 import { ModuleLogger } from "./ModuleLogger";
+import { buildCollectorExporterOptions } from "./utils/exporterConfig";
 
 import type { StandardLoggerInterface } from "./models/StandardLoggerInterface";
 
@@ -81,6 +82,15 @@ export class StandardLogger implements StandardLoggerInterface {
       config.OPENTELEMETRY_CONSOLE_LOG_MODE,
     );
     this.logLevel = normalizeLogLevel(config.OPENTELEMETRY_LOG_LEVEL);
+    // Build the exporter options before releasing the previous provider: a bad
+    // re-init must keep the working provider in place.
+    const exporterOptions = config.OPENTELEMETRY_COLLECTOR_HTTP_LOGS
+      ? buildCollectorExporterOptions(
+          config.OPENTELEMETRY_COLLECTOR_HTTP_LOGS,
+          config,
+          "OPENTELEMETRY_COLLECTOR_HTTP_LOGS",
+        )
+      : undefined;
     // Re-initialisation flushes and unregisters the previous provider first.
     if (this.loggerProvider) {
       await this.releaseProvider();
@@ -88,19 +98,11 @@ export class StandardLogger implements StandardLoggerInterface {
     this.serviceName = config.SERVICE_ID;
     this.serviceVersion = config.VERSION;
 
-    if (!config.OPENTELEMETRY_COLLECTOR_HTTP_LOGS) {
+    if (!exporterOptions) {
       return;
     }
 
-    const exporterHeaders: Record<string, string> = {};
-    if (config.OPENTELEMETRY_COLLECT_AUTHORIZATION_HEADER) {
-      exporterHeaders["Authorization"] =
-        `Bearer ${config.OPENTELEMETRY_COLLECT_AUTHORIZATION_HEADER}`;
-    }
-    const exporter = new OTLPLogExporter({
-      url: config.OPENTELEMETRY_COLLECTOR_HTTP_LOGS,
-      headers: exporterHeaders,
-    });
+    const exporter = new OTLPLogExporter(exporterOptions);
 
     this.loggerProvider = new LoggerProvider({
       processors: [

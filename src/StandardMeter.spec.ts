@@ -131,6 +131,8 @@ describe("StandardMeter", () => {
     expect(mockExporterConstructor).toHaveBeenCalledWith({
       url: "http://collector:4318/v1/metrics",
       headers: {},
+      timeoutMillis: 10000,
+      compression: "none",
       concurrencyLimit: 5,
     });
     await meter.shutdown();
@@ -147,6 +149,8 @@ describe("StandardMeter", () => {
     expect(mockExporterConstructor).toHaveBeenCalledWith({
       url: "http://collector:4318/v1/metrics",
       headers: { Authorization: "Bearer secret" },
+      timeoutMillis: 10000,
+      compression: "none",
       concurrencyLimit: 5,
     });
     await meter.shutdown();
@@ -367,6 +371,144 @@ describe("StandardMeter", () => {
     expect(shutdownSpy).toHaveBeenCalledTimes(1);
   });
 
+  describe("exporter HTTP options", () => {
+    it("forwards headers, request timeout and gzip compression", async () => {
+      const meter = makeMeter({
+        ...meterConfig("metric-service", "https://collector/v1/metrics"),
+        OPENTELEMETRY_COLLECTOR_HTTP_HEADERS: {
+          "X-Tenant": "acme",
+          authorization: "Basic abc",
+        },
+        OPENTELEMETRY_COLLECT_AUTHORIZATION_HEADER: "secret",
+        OPENTELEMETRY_COLLECTOR_HTTP_TIMEOUT_MILLIS: 5000,
+        OPENTELEMETRY_COLLECTOR_HTTP_COMPRESSION: "gzip",
+      });
+
+      expect(mockExporterConstructor).toHaveBeenCalledWith({
+        url: "https://collector/v1/metrics",
+        headers: { "X-Tenant": "acme", Authorization: "Bearer secret" },
+        timeoutMillis: 5000,
+        compression: "gzip",
+        concurrencyLimit: 5,
+      });
+      await meter.shutdown();
+    });
+
+    it("warns exactly once when a bearer token is sent over plain HTTP", async () => {
+      const meter = makeMeter({
+        ...meterConfig("metric-service", "http://collector/v1/metrics"),
+        OPENTELEMETRY_COLLECT_AUTHORIZATION_HEADER: "secret",
+      });
+
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      const message = warnSpy.mock.calls[0][0] as string;
+      expect(message).toContain("plain HTTP");
+      expect(message).not.toContain("secret");
+      await meter.shutdown();
+    });
+
+    it("does not warn for https with a bearer token", async () => {
+      const meter = makeMeter({
+        ...meterConfig("metric-service", "https://collector/v1/metrics"),
+        OPENTELEMETRY_COLLECT_AUTHORIZATION_HEADER: "secret",
+      });
+
+      expect(warnSpy).not.toHaveBeenCalled();
+      await meter.shutdown();
+    });
+  });
+
+  describe("exporter validation", () => {
+    it("rejects a malformed metrics URL without creating an exporter", () => {
+      expect(() =>
+        makeMeter(meterConfig("metric-service", "ftp://collector/v1/metrics")),
+      ).toThrow(
+        "[otel-utils] OPENTELEMETRY_COLLECTOR_HTTP_METRICS must be a valid http(s) URL",
+      );
+      expect(mockExporterConstructor).not.toHaveBeenCalled();
+    });
+
+    it("rejects invalid headers without creating an exporter", () => {
+      expect(() =>
+        makeMeter({
+          ...meterConfig("metric-service", "https://collector/v1/metrics"),
+          OPENTELEMETRY_COLLECTOR_HTTP_HEADERS: {
+            "X-Tenant": 42 as unknown as string,
+          },
+        }),
+      ).toThrow(
+        '[otel-utils] OPENTELEMETRY_COLLECTOR_HTTP_HEADERS["X-Tenant"] must be a string',
+      );
+      expect(mockExporterConstructor).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("metric export timeout", () => {
+    it("forwards a configured timeout while a 60 s interval is in place", async () => {
+      const meter = makeMeter({
+        ...meterConfig("metric-service", "https://collector/v1/metrics"),
+        OPENTELEMETRY_COLLECTOR_EXPORT_METRICS_TIMEOUT_MILLIS: 45000,
+      });
+
+      expect(metricReaderOptions()[0]).toEqual({
+        exporter: expect.anything(),
+        exportIntervalMillis: 60000,
+        exportTimeoutMillis: 45000,
+      });
+      expect(warnSpy).not.toHaveBeenCalled();
+      await meter.shutdown();
+    });
+
+    it("clamps a timeout above the interval and warns exactly once", async () => {
+      const meter = makeMeter({
+        ...meterConfig("metric-service", "https://collector/v1/metrics"),
+        OPENTELEMETRY_COLLECTOR_EXPORT_METRICS_INTERVAL_SECONDS: 5,
+        OPENTELEMETRY_COLLECTOR_EXPORT_METRICS_TIMEOUT_MILLIS: 12000,
+      });
+
+      expect(metricReaderOptions()[0]).toEqual({
+        exporter: expect.anything(),
+        exportIntervalMillis: 5000,
+        exportTimeoutMillis: 5000,
+      });
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("clamping the export timeout to 5000 ms"),
+      );
+      await meter.shutdown();
+    });
+
+    it("accepts a timeout equal to the interval without warning", async () => {
+      const meter = makeMeter({
+        ...meterConfig("metric-service", "https://collector/v1/metrics"),
+        OPENTELEMETRY_COLLECTOR_EXPORT_METRICS_INTERVAL_SECONDS: 10,
+        OPENTELEMETRY_COLLECTOR_EXPORT_METRICS_TIMEOUT_MILLIS: 10000,
+      });
+
+      expect(metricReaderOptions()[0]).toEqual({
+        exporter: expect.anything(),
+        exportIntervalMillis: 10000,
+        exportTimeoutMillis: 10000,
+      });
+      expect(warnSpy).not.toHaveBeenCalled();
+      await meter.shutdown();
+    });
+
+    it("falls back to the default timeout for invalid values", async () => {
+      const meter = makeMeter({
+        ...meterConfig("metric-service", "https://collector/v1/metrics"),
+        OPENTELEMETRY_COLLECTOR_EXPORT_METRICS_TIMEOUT_MILLIS: 0,
+      });
+
+      expect(metricReaderOptions()[0]).toEqual({
+        exporter: expect.anything(),
+        exportIntervalMillis: 60000,
+        exportTimeoutMillis: 30000,
+      });
+      await meter.shutdown();
+    });
+  });
+
   describe("export interval tuning", () => {
     it("uses the documented default interval", async () => {
       const meter = makeMeter(
@@ -377,6 +519,7 @@ describe("StandardMeter", () => {
       expect(metricReaderOptions()[0]).toEqual({
         exporter: expect.anything(),
         exportIntervalMillis: 60000,
+        exportTimeoutMillis: 30000,
       });
       await meter.shutdown();
     });

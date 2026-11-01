@@ -23,18 +23,49 @@ All classes accept a `ConfigOTelInterface` object. The fields mirror environment
 | `OPENTELEMETRY_COLLECTOR_HTTP_LOGS`                       | `string?`                                           | —          | OTLP HTTP endpoint for logs                               |
 | `OPENTELEMETRY_COLLECTOR_EXPORT_LOGS_INTERVAL_SECONDS`    | `number?`                                           | `60`       | Log export interval in seconds (clamped to ≥ 1)           |
 | `OPENTELEMETRY_COLLECTOR_EXPORT_METRICS_INTERVAL_SECONDS` | `number?`                                           | `60`       | Metrics export interval in seconds (clamped to ≥ 1)       |
+| `OPENTELEMETRY_COLLECTOR_EXPORT_TRACES_INTERVAL_SECONDS`  | `number?`                                           | `5`        | Trace export interval in seconds (clamped to ≥ 1)         |
 | `OPENTELEMETRY_COLLECTOR_EXPORT_LOGS_MAX_QUEUE_SIZE`      | `number?`                                           | `2048`     | Max log records buffered before export                    |
 | `OPENTELEMETRY_COLLECTOR_EXPORT_LOGS_MAX_BATCH_SIZE`      | `number?`                                           | `512`      | Max log records per export batch                          |
 | `OPENTELEMETRY_COLLECTOR_EXPORT_LOGS_TIMEOUT_MILLIS`      | `number?`                                           | `30000`    | Log export timeout in milliseconds                        |
+| `OPENTELEMETRY_COLLECTOR_EXPORT_TRACES_MAX_QUEUE_SIZE`    | `number?`                                           | `2048`     | Max spans buffered before export                          |
+| `OPENTELEMETRY_COLLECTOR_EXPORT_TRACES_MAX_BATCH_SIZE`    | `number?`                                           | `512`      | Max spans per export batch                                |
+| `OPENTELEMETRY_COLLECTOR_EXPORT_TRACES_TIMEOUT_MILLIS`    | `number?`                                           | `30000`    | Trace export timeout in milliseconds                      |
+| `OPENTELEMETRY_COLLECTOR_EXPORT_METRICS_TIMEOUT_MILLIS`   | `number?`                                           | `30000`    | Metrics reader export timeout (clamped to the interval)   |
+| `OPENTELEMETRY_COLLECTOR_HTTP_HEADERS`                    | `Record<string, string>?`                           | `{}`       | Extra OTLP HTTP headers for all signals                   |
+| `OPENTELEMETRY_COLLECTOR_HTTP_TIMEOUT_MILLIS`             | `number?`                                           | `10000`    | Per-request OTLP HTTP exporter timeout                    |
+| `OPENTELEMETRY_COLLECTOR_HTTP_COMPRESSION`                | `"gzip" \| "none"`                                  | `"none"`   | OTLP HTTP request compression                             |
 | `OPENTELEMETRY_CONSOLE_LOG_MODE`                          | `"always" \| "fallback" \| "never"`                 | `"always"` | Console mirroring mode for `ModuleLogger`                 |
 | `OPENTELEMETRY_LOG_LEVEL`                                 | `"trace" \| "debug" \| "info" \| "warn" \| "error"` | `"info"`   | Minimum level emitted to OTel and mirrored to the console |
 | `OPENTELEMETRY_COLLECT_AUTHORIZATION_HEADER`              | `string?`                                           | —          | Bearer token for collector auth                           |
 
 `SERVICE_ID` and `VERSION` must be non-empty strings. `StandardTracer`/`StandardMeter` constructors and `StandardLogger.initOTel` fail fast with `[otel-utils] SERVICE_ID must be a non-empty string` / `[otel-utils] VERSION must be a non-empty string` otherwise. A failed re-initialisation of `StandardLogger` keeps the previous provider in place.
 
-Numeric export intervals below 1 s (including `0` and negative values from an empty environment variable) are clamped to 1 s; `NaN`/`Infinity` fall back to the 60 s default. Non-positive or non-integer batch values fall back to their defaults. An invalid `OPENTELEMETRY_LOG_LEVEL` logs one `console.warn` and falls back to `"info"`; an invalid `OPENTELEMETRY_CONSOLE_LOG_MODE` logs one `console.warn` and falls back to `"always"`.
+Numeric export intervals below 1 s (including `0` and negative values from an empty environment variable) are clamped to 1 s; `NaN`/`Infinity` fall back to the signal's default (60 s for logs and metrics, 5 s for traces). Non-positive or non-integer batch values fall back to their defaults. The metrics export timeout is clamped to the export interval when it is larger, with one `console.warn` — see [StandardMeter](#standardmeter). An invalid `OPENTELEMETRY_LOG_LEVEL` logs one `console.warn` and falls back to `"info"`; an invalid `OPENTELEMETRY_CONSOLE_LOG_MODE` logs one `console.warn` and falls back to `"always"`; an invalid `OPENTELEMETRY_COLLECTOR_HTTP_COMPRESSION` logs one `console.warn` and falls back to `"none"`. Invalid collector URLs and header maps throw an `Error` naming the offending field (see [Exporter HTTP options](#exporter-http-options-all-signals)).
 
 When a collector endpoint is not provided, the corresponding signal (traces, logs, or metrics) is initialized with no export: traces and metrics still have a local provider but no data is sent, and `StandardLogger` creates no provider (its `getLogger()` returns `undefined`).
+
+## Exporter HTTP options (all signals)
+
+Traces, logs and metrics share the same OTLP HTTP exporter options:
+
+| Option                                        | Default  | Behaviour                                                                  |
+| --------------------------------------------- | -------- | -------------------------------------------------------------------------- |
+| `OPENTELEMETRY_COLLECTOR_HTTP_HEADERS`        | `{}`     | Extra request headers (`Record<string, string>`) sent to the collector.    |
+| `OPENTELEMETRY_COLLECTOR_HTTP_TIMEOUT_MILLIS` | `10000`  | Per-request timeout of the OTLP exporter (not the batch export timeout).   |
+| `OPENTELEMETRY_COLLECTOR_HTTP_COMPRESSION`    | `"none"` | `"gzip"` compresses OTLP request bodies; `"none"` sends them uncompressed. |
+
+**Header precedence:** generic headers from `OPENTELEMETRY_COLLECTOR_HTTP_HEADERS` are applied first; when `OPENTELEMETRY_COLLECT_AUTHORIZATION_HEADER` is set, a bearer `Authorization` header is applied last and wins. Any generic `Authorization`/`authorization` entry is removed first (case-insensitive), so exactly one authorization header is sent. Invalid header maps (not an object, or a non-string value) throw an `Error` naming `OPENTELEMETRY_COLLECTOR_HTTP_HEADERS` and the offending key. An invalid compression value logs one `console.warn` and falls back to `"none"`.
+
+**Endpoint safety:** every configured `OPENTELEMETRY_COLLECTOR_HTTP_*` endpoint is validated when the provider is constructed (for `StandardLogger`, during `initOTel` before the previous provider is released). Malformed URLs and non-`http(s)` protocols (for example `ftp://`) throw `[otel-utils] <VARIABLE> must be a valid http(s) URL, got "..."`, naming the field, instead of failing later at export time. A `http://` endpoint combined with `OPENTELEMETRY_COLLECT_AUTHORIZATION_HEADER` logs exactly one `console.warn` per provider initialization explaining that the bearer token is sent in clear text; it does not fail, since plain HTTP may be intentional in a homelab. The token itself is never logged.
+
+```typescript
+const tracer = new StandardTracer({
+  ...config,
+  OPENTELEMETRY_COLLECTOR_HTTP_HEADERS: { "X-Tenant-Id": "acme" },
+  OPENTELEMETRY_COLLECTOR_HTTP_TIMEOUT_MILLIS: 5000,
+  OPENTELEMETRY_COLLECTOR_HTTP_COMPRESSION: "gzip",
+});
+```
 
 ## Exported Classes
 
@@ -64,6 +95,29 @@ span.end();
 - `static updateHttpHeader<T extends object = Record<string, string>>(context, headers?)` — Injects the W3C trace context of `context` into an HTTP headers object for propagation to downstream services, and returns that same object (a new one when omitted). Only `traceparent` and `tracestate` are injected: the propagation context is built from the span alone, so baggage and other active-context values are **not** propagated and an existing `baggage` header is left untouched.
 - `shutdown()` — Flushes buffered spans and shuts the tracer provider down. Idempotent.
 - `forceFlush()` — Flushes buffered spans to the collector without shutting the provider down; resolves immediately when no collector is configured. Use it at checkpoints in short-lived jobs and serverless handlers.
+
+**Trace batch tunables and loss window**
+
+When a traces endpoint is configured, spans flow through a `BatchSpanProcessor`. It buffers spans in memory and exports them periodically:
+
+| Option                 | Config field                                             | Default  |
+| ---------------------- | -------------------------------------------------------- | -------- |
+| `scheduledDelayMillis` | `OPENTELEMETRY_COLLECTOR_EXPORT_TRACES_INTERVAL_SECONDS` | 5000 ms  |
+| `maxQueueSize`         | `OPENTELEMETRY_COLLECTOR_EXPORT_TRACES_MAX_QUEUE_SIZE`   | 2048     |
+| `maxExportBatchSize`   | `OPENTELEMETRY_COLLECTOR_EXPORT_TRACES_MAX_BATCH_SIZE`   | 512      |
+| `exportTimeoutMillis`  | `OPENTELEMETRY_COLLECTOR_EXPORT_TRACES_TIMEOUT_MILLIS`   | 30000 ms |
+
+A span waits up to `scheduledDelayMillis` (5 s by default) before it is exported; each export sends at most `maxExportBatchSize` (512) spans with a 30 s timeout, and at most `maxQueueSize` (2048) spans are buffered. Spans that arrive while the queue is full are **dropped silently** — `BatchSpanProcessor` reports drops only through the OpenTelemetry `diag` logger, which is disabled by default. A crash or restart loses every span buffered since the last export; call `shutdown()` or use `registerShutdownHooks` (see [Graceful shutdown](#graceful-shutdown)) to flush them. Keep `maxExportBatchSize` ≤ `maxQueueSize` (the SDK clamps it otherwise).
+
+```typescript
+const tracer = new StandardTracer({
+  ...config,
+  OPENTELEMETRY_COLLECTOR_EXPORT_TRACES_INTERVAL_SECONDS: 2,
+  OPENTELEMETRY_COLLECTOR_EXPORT_TRACES_MAX_QUEUE_SIZE: 4096,
+  OPENTELEMETRY_COLLECTOR_EXPORT_TRACES_MAX_BATCH_SIZE: 1024,
+  OPENTELEMETRY_COLLECTOR_EXPORT_TRACES_TIMEOUT_MILLIS: 10000,
+});
+```
 
 ### StandardLogger
 
@@ -156,6 +210,23 @@ When a `Span` is passed as `context`, the log record includes `span.id` and `tra
 ### StandardMeter
 
 Creates a `MeterProvider` with an optional `PeriodicExportingMetricReader` (`concurrencyLimit: 5`). Provides convenience factories for common metric types. When `OPENTELEMETRY_COLLECTOR_HTTP_METRICS` is set, the provider is registered as the global meter provider (first instance only), so metrics emitted through `metrics.getMeter(...)` reach the configured exporter. Unconfigured meters leave the global API untouched (Noop).
+
+**Metric reader tunables**
+
+| Option                 | Config field                                              | Default  |
+| ---------------------- | --------------------------------------------------------- | -------- |
+| `exportIntervalMillis` | `OPENTELEMETRY_COLLECTOR_EXPORT_METRICS_INTERVAL_SECONDS` | 60000 ms |
+| `exportTimeoutMillis`  | `OPENTELEMETRY_COLLECTOR_EXPORT_METRICS_TIMEOUT_MILLIS`   | 30000 ms |
+
+Each export is cancelled after `exportTimeoutMillis`. When the configured timeout exceeds the export interval, it is clamped to the interval and one `console.warn` explains the effective value (`PeriodicExportingMetricReader` requires timeout ≤ interval). For example, a 5 s interval with the default 30 s timeout exports with a 5 s timeout and warns once at startup. The default 60 s interval and 30 s timeout are compatible and warning-free.
+
+```typescript
+const meter = new StandardMeter({
+  ...config,
+  OPENTELEMETRY_COLLECTOR_EXPORT_METRICS_INTERVAL_SECONDS: 15,
+  OPENTELEMETRY_COLLECTOR_EXPORT_METRICS_TIMEOUT_MILLIS: 10000,
+});
+```
 
 ```typescript
 import { StandardMeter } from "@devopsplaybook.io/otel-utils";
@@ -318,6 +389,7 @@ All three signals share the same service identity (name + version) and resource 
 - `@opentelemetry/sdk-logs` — Logging SDK
 - `@opentelemetry/exporter-trace-otlp-http` / `@opentelemetry/exporter-metrics-otlp-http` / `@opentelemetry/exporter-logs-otlp-http` — OTLP HTTP exporters
 - `@opentelemetry/id-generator-aws-xray` — AWS X-Ray trace ID format
+- `@opentelemetry/otlp-exporter-base` — OTLP exporter compression option
 - `@opentelemetry/context-async-hooks` — Async context management
 - `@opentelemetry/core` — W3C trace context propagation
 - `@opentelemetry/resources` / `@opentelemetry/semantic-conventions` — Resource attributes

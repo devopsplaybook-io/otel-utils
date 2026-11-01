@@ -139,6 +139,8 @@ describe("StandardLogger", () => {
     expect(mockExporterConstructor.mock.calls[0][0]).toEqual({
       url: "http://collector:4318/v1/logs",
       headers: {},
+      timeoutMillis: 10000,
+      compression: "none",
     });
     await logger.shutdown();
   });
@@ -153,6 +155,8 @@ describe("StandardLogger", () => {
     expect(mockExporterConstructor.mock.calls[0][0]).toEqual({
       url: "http://collector:4318/v1/logs",
       headers: { Authorization: "Bearer secret" },
+      timeoutMillis: 10000,
+      compression: "none",
     });
     await logger.shutdown();
   });
@@ -367,6 +371,113 @@ describe("StandardLogger", () => {
           .scheduledDelayMillis,
       ).toBe(60000);
       await logger.shutdown();
+    });
+  });
+
+  describe("exporter HTTP options", () => {
+    it("forwards headers, request timeout and gzip compression", async () => {
+      const logger = makeLogger();
+      await logger.initOTel({
+        ...collectorConfig("https://collector/v1/logs"),
+        OPENTELEMETRY_COLLECTOR_HTTP_HEADERS: {
+          "X-Tenant": "acme",
+          authorization: "Basic abc",
+        },
+        OPENTELEMETRY_COLLECT_AUTHORIZATION_HEADER: "secret",
+        OPENTELEMETRY_COLLECTOR_HTTP_TIMEOUT_MILLIS: 5000,
+        OPENTELEMETRY_COLLECTOR_HTTP_COMPRESSION: "gzip",
+      });
+
+      expect(mockExporterConstructor).toHaveBeenCalledWith({
+        url: "https://collector/v1/logs",
+        headers: { "X-Tenant": "acme", Authorization: "Bearer secret" },
+        timeoutMillis: 5000,
+        compression: "gzip",
+      });
+      await logger.shutdown();
+    });
+
+    it("warns exactly once when a bearer token is sent over plain HTTP", async () => {
+      const logger = makeLogger();
+      await logger.initOTel({
+        ...collectorConfig("http://collector/v1/logs"),
+        OPENTELEMETRY_COLLECT_AUTHORIZATION_HEADER: "secret",
+      });
+
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      const message = warnSpy.mock.calls[0][0] as string;
+      expect(message).toContain("plain HTTP");
+      expect(message).not.toContain("secret");
+      await logger.shutdown();
+    });
+
+    it("does not warn for https with a bearer token", async () => {
+      const logger = makeLogger();
+      await logger.initOTel({
+        ...collectorConfig("https://collector/v1/logs"),
+        OPENTELEMETRY_COLLECT_AUTHORIZATION_HEADER: "secret",
+      });
+
+      expect(warnSpy).not.toHaveBeenCalled();
+      await logger.shutdown();
+    });
+  });
+
+  describe("exporter validation", () => {
+    it("rejects a malformed logs URL without creating an exporter", async () => {
+      const logger = makeLogger();
+
+      await expect(
+        logger.initOTel(collectorConfig("ftp://collector/v1/logs")),
+      ).rejects.toThrow(
+        "[otel-utils] OPENTELEMETRY_COLLECTOR_HTTP_LOGS must be a valid http(s) URL",
+      );
+
+      expect(mockExporterConstructor).not.toHaveBeenCalled();
+      expect(logger.getLogger()).toBeUndefined();
+      await expect(logger.shutdown()).resolves.toBeUndefined();
+    });
+
+    it("rejects invalid headers without creating an exporter", async () => {
+      const logger = makeLogger();
+
+      await expect(
+        logger.initOTel({
+          ...collectorConfig("https://collector/v1/logs"),
+          OPENTELEMETRY_COLLECTOR_HTTP_HEADERS: {
+            "X-Tenant": 42 as unknown as string,
+          },
+        }),
+      ).rejects.toThrow(
+        '[otel-utils] OPENTELEMETRY_COLLECTOR_HTTP_HEADERS["X-Tenant"] must be a string',
+      );
+
+      expect(mockExporterConstructor).not.toHaveBeenCalled();
+      await expect(logger.shutdown()).resolves.toBeUndefined();
+    });
+
+    it("keeps the previous provider when a re-initialisation is invalid", async () => {
+      const logger = makeLogger();
+      await logger.initOTel(collectorConfig("https://collector-1/v1/logs"));
+      logger.createModuleLogger("billing").info("before-invalid-reinit");
+
+      await expect(
+        logger.initOTel(collectorConfig("ftp://collector-2/v1/logs")),
+      ).rejects.toThrow(
+        "[otel-utils] OPENTELEMETRY_COLLECTOR_HTTP_LOGS must be a valid http(s) URL",
+      );
+
+      expect(logger.getLogger()).toBeDefined();
+      logger.createModuleLogger("billing").info("after-invalid-reinit");
+      await logger.shutdown();
+
+      expect(mockExporterConstructor).toHaveBeenCalledTimes(1);
+      expect(exportedBodies(exporterAt(0))).toEqual(
+        expect.arrayContaining([
+          "[billing] before-invalid-reinit",
+          "[billing] after-invalid-reinit",
+        ]),
+      );
     });
   });
 
