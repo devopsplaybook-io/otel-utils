@@ -1,6 +1,10 @@
 import { logs, SeverityNumber } from "@opentelemetry/api";
 import { OTLPLogExporter } from "@opentelemetry/exporter-logs-otlp-http";
 import { LoggerProvider } from "@opentelemetry/sdk-logs";
+import {
+  ATTR_DEPLOYMENT_ENVIRONMENT_NAME,
+  ATTR_SERVICE_INSTANCE_ID,
+} from "@opentelemetry/semantic-conventions";
 import type { ConsoleLogMode, LogLevel } from "./models/ConfigOTelInterface";
 import { ConfigOTelInterface } from "./models/ConfigOTelInterface";
 import { StandardLogger } from "./StandardLogger";
@@ -20,20 +24,47 @@ jest.mock("@opentelemetry/sdk-logs", () => {
       batchProcessorOptions.push(options);
     }
   }
+  const loggerProviderOptions: unknown[] = [];
+  class RecordingLoggerProvider extends actual.LoggerProvider {
+    constructor(
+      options: ConstructorParameters<typeof actual.LoggerProvider>[0],
+    ) {
+      super(options);
+      loggerProviderOptions.push(options);
+    }
+  }
   return {
     ...actual,
     BatchLogRecordProcessor: RecordingBatchLogRecordProcessor,
+    LoggerProvider: RecordingLoggerProvider,
     __batchProcessorOptions: batchProcessorOptions,
+    __loggerProviderOptions: loggerProviderOptions,
   };
 });
 
 interface SdkLogsMock {
   __batchProcessorOptions: unknown[];
+  __loggerProviderOptions: unknown[];
 }
 
 function batchProcessorOptions(): unknown[] {
   return (jest.requireMock("@opentelemetry/sdk-logs") as SdkLogsMock)
     .__batchProcessorOptions;
+}
+
+function loggerProviderOptions(): unknown[] {
+  return (jest.requireMock("@opentelemetry/sdk-logs") as SdkLogsMock)
+    .__loggerProviderOptions;
+}
+
+interface RecordedLoggerProviderOptions {
+  resource: { attributes: Record<string, unknown> };
+}
+
+function lastProviderResource(): Record<string, unknown> {
+  const options = loggerProviderOptions();
+  return (options[options.length - 1] as RecordedLoggerProviderOptions).resource
+    .attributes;
 }
 
 jest.mock("@opentelemetry/exporter-logs-otlp-http", () => {
@@ -115,6 +146,7 @@ describe("StandardLogger", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     batchProcessorOptions().length = 0;
+    loggerProviderOptions().length = 0;
     logs.disable();
     warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
     logSpy = jest.spyOn(console, "log").mockImplementation(() => {});
@@ -478,6 +510,76 @@ describe("StandardLogger", () => {
           "[billing] after-invalid-reinit",
         ]),
       );
+    });
+  });
+
+  describe("resource identity", () => {
+    it("adds the instance, environment and custom attributes to the logger resource", async () => {
+      const logger = makeLogger();
+      await logger.initOTel({
+        ...collectorConfig("http://collector/v1/logs"),
+        SERVICE_INSTANCE_ID: "pod-7",
+        DEPLOYMENT_ENVIRONMENT_NAME: "production",
+        OPENTELEMETRY_RESOURCE_ATTRIBUTES: {
+          "deployment.tier": "web",
+          replicas: 2,
+          canary: true,
+        },
+      });
+
+      const attributes = lastProviderResource();
+      expect(attributes[ATTR_SERVICE_INSTANCE_ID]).toBe("pod-7");
+      expect(attributes[ATTR_DEPLOYMENT_ENVIRONMENT_NAME]).toBe("production");
+      expect(attributes["deployment.tier"]).toBe("web");
+      expect(attributes.replicas).toBe(2);
+      expect(attributes.canary).toBe(true);
+      await logger.shutdown();
+    });
+
+    it("keeps the default resource attributes when the new fields are unset", async () => {
+      const logger = makeLogger();
+      await logger.initOTel(collectorConfig("http://collector/v1/logs"));
+
+      const attributes = lastProviderResource();
+      expect(attributes["service.name"]).toBe("log-service");
+      expect(attributes[ATTR_SERVICE_INSTANCE_ID]).toBeUndefined();
+      expect(attributes[ATTR_DEPLOYMENT_ENVIRONMENT_NAME]).toBeUndefined();
+      await logger.shutdown();
+    });
+
+    it("rebuilds the provider with the new resource on re-initialisation", async () => {
+      const logger = makeLogger();
+      await logger.initOTel(collectorConfig("http://collector-1/v1/logs"));
+      expect(lastProviderResource()[ATTR_SERVICE_INSTANCE_ID]).toBeUndefined();
+
+      await logger.initOTel({
+        ...collectorConfig("http://collector-2/v1/logs"),
+        SERVICE_INSTANCE_ID: "pod-9",
+      });
+
+      expect(loggerProviderOptions()).toHaveLength(2);
+      expect(lastProviderResource()[ATTR_SERVICE_INSTANCE_ID]).toBe("pod-9");
+      await logger.shutdown();
+    });
+
+    it("keeps the previous provider when the resource configuration is invalid", async () => {
+      const logger = makeLogger();
+      await logger.initOTel(collectorConfig("http://collector-1/v1/logs"));
+
+      await expect(
+        logger.initOTel({
+          ...collectorConfig("http://collector-2/v1/logs"),
+          OPENTELEMETRY_RESOURCE_ATTRIBUTES: {
+            region: {} as unknown as string,
+          },
+        }),
+      ).rejects.toThrow(
+        '[otel-utils] OPENTELEMETRY_RESOURCE_ATTRIBUTES["region"] must be a string, number or boolean',
+      );
+
+      expect(loggerProviderOptions()).toHaveLength(1);
+      expect(logger.getLogger()).toBeDefined();
+      await logger.shutdown();
     });
   });
 

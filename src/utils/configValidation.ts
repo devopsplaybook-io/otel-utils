@@ -3,7 +3,25 @@ import type {
   ConfigOTelInterface,
   ConsoleLogMode,
   LogLevel,
+  ResourceAttributeValue,
+  TraceSampler,
 } from "../models/ConfigOTelInterface";
+
+const DEFAULT_TRACE_SAMPLER: TraceSampler = "parentbased_always_on";
+
+const TRACE_SAMPLERS: readonly TraceSampler[] = [
+  "always_on",
+  "always_off",
+  "traceidratio",
+  "parentbased_always_on",
+  "parentbased_always_off",
+  "parentbased_traceidratio",
+];
+
+const RATIO_TRACE_SAMPLERS: readonly TraceSampler[] = [
+  "traceidratio",
+  "parentbased_traceidratio",
+];
 
 export function validateServiceIdentity(
   config: Pick<ConfigOTelInterface, "SERVICE_ID" | "VERSION">,
@@ -17,6 +35,93 @@ export function validateServiceIdentity(
   if (typeof config.VERSION !== "string" || config.VERSION.trim() === "") {
     throw new Error("[otel-utils] VERSION must be a non-empty string");
   }
+}
+
+export function resolveTraceSampler(
+  samplerValue: unknown,
+  ratioValue: unknown,
+): { sampler: TraceSampler; ratio: number } {
+  const sampler = normalizeTraceSampler(samplerValue);
+  if (!RATIO_TRACE_SAMPLERS.includes(sampler)) {
+    return { sampler, ratio: 1 };
+  }
+  return { sampler, ratio: normalizeTraceSamplerRatio(ratioValue) };
+}
+
+function normalizeTraceSampler(value: unknown): TraceSampler {
+  if (
+    value === undefined ||
+    (typeof value === "string" && value.trim() === "")
+  ) {
+    return DEFAULT_TRACE_SAMPLER;
+  }
+  if (TRACE_SAMPLERS.includes(value as TraceSampler)) {
+    return value as TraceSampler;
+  }
+  console.warn(
+    `[otel-utils] Invalid OPENTELEMETRY_TRACES_SAMPLER value "${String(value)}"; expected ${TRACE_SAMPLERS.map(
+      (sampler) => `"${sampler}"`,
+    ).join(", ")}. Defaulting to "${DEFAULT_TRACE_SAMPLER}".`,
+  );
+  return DEFAULT_TRACE_SAMPLER;
+}
+
+function normalizeTraceSamplerRatio(value: unknown): number {
+  if (
+    typeof value === "number" &&
+    Number.isFinite(value) &&
+    value >= 0 &&
+    value <= 1
+  ) {
+    return value;
+  }
+  console.warn(
+    `[otel-utils] Invalid OPENTELEMETRY_TRACES_SAMPLER_ARG value "${String(value)}"; expected a number between 0 and 1. Defaulting to 1.`,
+  );
+  return 1;
+}
+
+export function normalizeResourceAttributes(
+  value: unknown,
+): Record<string, ResourceAttributeValue> {
+  if (value === undefined) {
+    return {};
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error(
+      "[otel-utils] OPENTELEMETRY_RESOURCE_ATTRIBUTES must be an object mapping attribute names to string, number or boolean values",
+    );
+  }
+  const attributes: Record<string, ResourceAttributeValue> = {};
+  for (const [name, attributeValue] of Object.entries(value)) {
+    if (
+      typeof attributeValue !== "string" &&
+      typeof attributeValue !== "boolean" &&
+      !(typeof attributeValue === "number" && Number.isFinite(attributeValue))
+    ) {
+      throw new Error(
+        `[otel-utils] OPENTELEMETRY_RESOURCE_ATTRIBUTES["${name}"] must be a string, number or boolean`,
+      );
+    }
+    attributes[name] = attributeValue;
+  }
+  return attributes;
+}
+
+export function normalizeOptionalIdentityValue(
+  value: unknown,
+  variableName: string,
+): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "string") {
+    throw new Error(`[otel-utils] ${variableName} must be a string when set`);
+  }
+  if (value.trim() === "") {
+    return undefined;
+  }
+  return value;
 }
 
 export function normalizeExportIntervalSeconds(

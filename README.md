@@ -14,35 +14,74 @@ Requires Node.js 22 or newer (`engines` in `package.json`).
 
 All classes accept a `ConfigOTelInterface` object. The fields mirror environment variables in the consuming application (for example `common-utils`' `ConfigBase`); the library itself does not read `process.env`.
 
-| Field                                                     | Type                                                | Default    | Description                                               |
-| --------------------------------------------------------- | --------------------------------------------------- | ---------- | --------------------------------------------------------- |
-| `SERVICE_ID`                                              | `string`                                            | —          | Service identifier (required, non-empty)                  |
-| `VERSION`                                                 | `string`                                            | —          | Service version (required, non-empty)                     |
-| `OPENTELEMETRY_COLLECTOR_HTTP_TRACES`                     | `string?`                                           | —          | OTLP HTTP endpoint for traces                             |
-| `OPENTELEMETRY_COLLECTOR_HTTP_METRICS`                    | `string?`                                           | —          | OTLP HTTP endpoint for metrics                            |
-| `OPENTELEMETRY_COLLECTOR_HTTP_LOGS`                       | `string?`                                           | —          | OTLP HTTP endpoint for logs                               |
-| `OPENTELEMETRY_COLLECTOR_EXPORT_LOGS_INTERVAL_SECONDS`    | `number?`                                           | `60`       | Log export interval in seconds (clamped to ≥ 1)           |
-| `OPENTELEMETRY_COLLECTOR_EXPORT_METRICS_INTERVAL_SECONDS` | `number?`                                           | `60`       | Metrics export interval in seconds (clamped to ≥ 1)       |
-| `OPENTELEMETRY_COLLECTOR_EXPORT_TRACES_INTERVAL_SECONDS`  | `number?`                                           | `5`        | Trace export interval in seconds (clamped to ≥ 1)         |
-| `OPENTELEMETRY_COLLECTOR_EXPORT_LOGS_MAX_QUEUE_SIZE`      | `number?`                                           | `2048`     | Max log records buffered before export                    |
-| `OPENTELEMETRY_COLLECTOR_EXPORT_LOGS_MAX_BATCH_SIZE`      | `number?`                                           | `512`      | Max log records per export batch                          |
-| `OPENTELEMETRY_COLLECTOR_EXPORT_LOGS_TIMEOUT_MILLIS`      | `number?`                                           | `30000`    | Log export timeout in milliseconds                        |
-| `OPENTELEMETRY_COLLECTOR_EXPORT_TRACES_MAX_QUEUE_SIZE`    | `number?`                                           | `2048`     | Max spans buffered before export                          |
-| `OPENTELEMETRY_COLLECTOR_EXPORT_TRACES_MAX_BATCH_SIZE`    | `number?`                                           | `512`      | Max spans per export batch                                |
-| `OPENTELEMETRY_COLLECTOR_EXPORT_TRACES_TIMEOUT_MILLIS`    | `number?`                                           | `30000`    | Trace export timeout in milliseconds                      |
-| `OPENTELEMETRY_COLLECTOR_EXPORT_METRICS_TIMEOUT_MILLIS`   | `number?`                                           | `30000`    | Metrics reader export timeout (clamped to the interval)   |
-| `OPENTELEMETRY_COLLECTOR_HTTP_HEADERS`                    | `Record<string, string>?`                           | `{}`       | Extra OTLP HTTP headers for all signals                   |
-| `OPENTELEMETRY_COLLECTOR_HTTP_TIMEOUT_MILLIS`             | `number?`                                           | `10000`    | Per-request OTLP HTTP exporter timeout                    |
-| `OPENTELEMETRY_COLLECTOR_HTTP_COMPRESSION`                | `"gzip" \| "none"`                                  | `"none"`   | OTLP HTTP request compression                             |
-| `OPENTELEMETRY_CONSOLE_LOG_MODE`                          | `"always" \| "fallback" \| "never"`                 | `"always"` | Console mirroring mode for `ModuleLogger`                 |
-| `OPENTELEMETRY_LOG_LEVEL`                                 | `"trace" \| "debug" \| "info" \| "warn" \| "error"` | `"info"`   | Minimum level emitted to OTel and mirrored to the console |
-| `OPENTELEMETRY_COLLECT_AUTHORIZATION_HEADER`              | `string?`                                           | —          | Bearer token for collector auth                           |
+| Field                                                     | Type                                                | Default                 | Description                                               |
+| --------------------------------------------------------- | --------------------------------------------------- | ----------------------- | --------------------------------------------------------- |
+| `SERVICE_ID`                                              | `string`                                            | —                       | Service identifier (required, non-empty)                  |
+| `VERSION`                                                 | `string`                                            | —                       | Service version (required, non-empty)                     |
+| `SERVICE_INSTANCE_ID`                                     | `string?`                                           | —                       | Opt-in `service.instance.id` resource attribute           |
+| `DEPLOYMENT_ENVIRONMENT_NAME`                             | `string?`                                           | —                       | Opt-in `deployment.environment.name` resource attribute   |
+| `OPENTELEMETRY_RESOURCE_ATTRIBUTES`                       | `Record<string, string \| number \| boolean>?`      | `{}`                    | Extra resource attributes shared by all three signals     |
+| `OPENTELEMETRY_TRACES_SAMPLER`                            | `TraceSampler?`                                     | `parentbased_always_on` | Trace sampler — see [Trace sampling](#trace-sampling)     |
+| `OPENTELEMETRY_TRACES_SAMPLER_ARG`                        | `number?`                                           | `1`                     | Sample ratio for the `*traceidratio` samplers, in `[0,1]` |
+| `OPENTELEMETRY_COLLECTOR_HTTP_TRACES`                     | `string?`                                           | —                       | OTLP HTTP endpoint for traces                             |
+| `OPENTELEMETRY_COLLECTOR_HTTP_METRICS`                    | `string?`                                           | —                       | OTLP HTTP endpoint for metrics                            |
+| `OPENTELEMETRY_COLLECTOR_HTTP_LOGS`                       | `string?`                                           | —                       | OTLP HTTP endpoint for logs                               |
+| `OPENTELEMETRY_COLLECTOR_EXPORT_LOGS_INTERVAL_SECONDS`    | `number?`                                           | `60`                    | Log export interval in seconds (clamped to ≥ 1)           |
+| `OPENTELEMETRY_COLLECTOR_EXPORT_METRICS_INTERVAL_SECONDS` | `number?`                                           | `60`                    | Metrics export interval in seconds (clamped to ≥ 1)       |
+| `OPENTELEMETRY_COLLECTOR_EXPORT_TRACES_INTERVAL_SECONDS`  | `number?`                                           | `5`                     | Trace export interval in seconds (clamped to ≥ 1)         |
+| `OPENTELEMETRY_COLLECTOR_EXPORT_LOGS_MAX_QUEUE_SIZE`      | `number?`                                           | `2048`                  | Max log records buffered before export                    |
+| `OPENTELEMETRY_COLLECTOR_EXPORT_LOGS_MAX_BATCH_SIZE`      | `number?`                                           | `512`                   | Max log records per export batch                          |
+| `OPENTELEMETRY_COLLECTOR_EXPORT_LOGS_TIMEOUT_MILLIS`      | `number?`                                           | `30000`                 | Log export timeout in milliseconds                        |
+| `OPENTELEMETRY_COLLECTOR_EXPORT_TRACES_MAX_QUEUE_SIZE`    | `number?`                                           | `2048`                  | Max spans buffered before export                          |
+| `OPENTELEMETRY_COLLECTOR_EXPORT_TRACES_MAX_BATCH_SIZE`    | `number?`                                           | `512`                   | Max spans per export batch                                |
+| `OPENTELEMETRY_COLLECTOR_EXPORT_TRACES_TIMEOUT_MILLIS`    | `number?`                                           | `30000`                 | Trace export timeout in milliseconds                      |
+| `OPENTELEMETRY_COLLECTOR_EXPORT_METRICS_TIMEOUT_MILLIS`   | `number?`                                           | `30000`                 | Metrics reader export timeout (clamped to the interval)   |
+| `OPENTELEMETRY_COLLECTOR_HTTP_HEADERS`                    | `Record<string, string>?`                           | `{}`                    | Extra OTLP HTTP headers for all signals                   |
+| `OPENTELEMETRY_COLLECTOR_HTTP_TIMEOUT_MILLIS`             | `number?`                                           | `10000`                 | Per-request OTLP HTTP exporter timeout                    |
+| `OPENTELEMETRY_COLLECTOR_HTTP_COMPRESSION`                | `"gzip" \| "none"`                                  | `"none"`                | OTLP HTTP request compression                             |
+| `OPENTELEMETRY_CONSOLE_LOG_MODE`                          | `"always" \| "fallback" \| "never"`                 | `"always"`              | Console mirroring mode for `ModuleLogger`                 |
+| `OPENTELEMETRY_LOG_LEVEL`                                 | `"trace" \| "debug" \| "info" \| "warn" \| "error"` | `"info"`                | Minimum level emitted to OTel and mirrored to the console |
+| `OPENTELEMETRY_COLLECT_AUTHORIZATION_HEADER`              | `string?`                                           | —                       | Bearer token for collector auth                           |
 
 `SERVICE_ID` and `VERSION` must be non-empty strings. `StandardTracer`/`StandardMeter` constructors and `StandardLogger.initOTel` fail fast with `[otel-utils] SERVICE_ID must be a non-empty string` / `[otel-utils] VERSION must be a non-empty string` otherwise. A failed re-initialisation of `StandardLogger` keeps the previous provider in place.
+
+`SERVICE_INSTANCE_ID` and `DEPLOYMENT_ENVIRONMENT_NAME` are optional: `undefined` or a blank/whitespace-only string means "unset", any other non-string value throws `[otel-utils] <VARIABLE> must be a string when set`. `OPENTELEMETRY_RESOURCE_ATTRIBUTES` must be an object whose values are strings, finite numbers or booleans; anything else throws an `Error` naming `OPENTELEMETRY_RESOURCE_ATTRIBUTES` and the offending key. An invalid `OPENTELEMETRY_TRACES_SAMPLER` logs one `console.warn` and falls back to `parentbased_always_on`; a missing or invalid `OPENTELEMETRY_TRACES_SAMPLER_ARG` for the ratio samplers logs one `console.warn` and falls back to `1` (see [Trace sampling](#trace-sampling)).
 
 Numeric export intervals below 1 s (including `0` and negative values from an empty environment variable) are clamped to 1 s; `NaN`/`Infinity` fall back to the signal's default (60 s for logs and metrics, 5 s for traces). Non-positive or non-integer batch values fall back to their defaults. The metrics export timeout is clamped to the export interval when it is larger, with one `console.warn` — see [StandardMeter](#standardmeter). An invalid `OPENTELEMETRY_LOG_LEVEL` logs one `console.warn` and falls back to `"info"`; an invalid `OPENTELEMETRY_CONSOLE_LOG_MODE` logs one `console.warn` and falls back to `"always"`; an invalid `OPENTELEMETRY_COLLECTOR_HTTP_COMPRESSION` logs one `console.warn` and falls back to `"none"`. Invalid collector URLs and header maps throw an `Error` naming the offending field (see [Exporter HTTP options](#exporter-http-options-all-signals)).
 
 When a collector endpoint is not provided, the corresponding signal (traces, logs, or metrics) is initialized with no export: traces and metrics still have a local provider but no data is sent, and `StandardLogger` creates no provider (its `getLogger()` returns `undefined`).
+
+## Resource identity
+
+`StandardTracer`, `StandardLogger` and `StandardMeter` build the same OpenTelemetry resource, so filtering by service or environment behaves identically across traces, logs and metrics:
+
+| Attribute                     | Source                                            | Default              |
+| ----------------------------- | ------------------------------------------------- | -------------------- |
+| `service.name`                | `SERVICE_ID`                                      | — (required)         |
+| `service.version`             | `VERSION`                                         | — (required)         |
+| `network.local.address`       | hostname (`os.hostname()`, cached at module load) | the current hostname |
+| `service.instance.id`         | `SERVICE_INSTANCE_ID`                             | unset (opt-in)       |
+| `deployment.environment.name` | `DEPLOYMENT_ENVIRONMENT_NAME`                     | unset (opt-in)       |
+| any other attribute           | `OPENTELEMETRY_RESOURCE_ATTRIBUTES`               | `{}`                 |
+
+`service.instance.id` and `deployment.environment.name` are stable OpenTelemetry semantic conventions; setting them (for example to the pod name and `production`) materially improves filtering in a shared collector such as otel-light. Both are opt-in: `undefined` or a blank string means the attribute is not set, so the default resource is exactly `service.name` + `service.version` + `network.local.address`.
+
+`OPENTELEMETRY_RESOURCE_ATTRIBUTES` adds any `string | number | boolean` attribute (for example `{ "deployment.tier": "web" }`). **Precedence:** the custom map is applied first; the dedicated identity fields above are applied last and win when set, so a custom map cannot override `service.name`, `service.version`, `network.local.address`, or a configured `service.instance.id`/`deployment.environment.name`. Malformed maps throw an `Error` naming the field and key (see [Configuration](#configuration)).
+
+```typescript
+const config = {
+  ...baseConfig,
+  SERVICE_INSTANCE_ID: process.env.HOSTNAME ?? "local",
+  DEPLOYMENT_ENVIRONMENT_NAME: "production",
+  OPENTELEMETRY_RESOURCE_ATTRIBUTES: {
+    "deployment.tier": "web",
+    canary: false,
+  },
+};
+const tracer = new StandardTracer(config);
+await logger.initOTel(config);
+const meter = new StandardMeter(config);
+```
 
 ## Exporter HTTP options (all signals)
 
@@ -76,7 +115,8 @@ Creates a `TracerProvider` with:
 - AWS X-Ray ID generator (`AWSXRayIdGenerator`)
 - OTLP HTTP trace exporter (optional, when `OPENTELEMETRY_COLLECTOR_HTTP_TRACES` is set)
 - one process-wide `AsyncLocalStorageContextManager`, installed on first construction when no other context manager is registered (kept for the process lifetime)
-- Service resource attributes (name, version, hostname)
+- the configured trace sampler (default `parentbased_always_on`, the SDK default)
+- Service resource attributes (name, version, hostname, plus the opt-in instance id, deployment environment and custom attributes)
 
 The instance exports its spans through its own provider (`tracer.startSpan(...)` is always routed to this instance). The first `StandardTracer` constructed in a process also registers its provider as the global one, so `trace.getTracer(...)` from `@opentelemetry/api` resolves to it. Later instances do not replace the global provider: they log a warning and keep exporting through their own provider — see [Provider lifecycle](#provider-lifecycle).
 
@@ -91,10 +131,46 @@ span.end();
 
 **Methods:**
 
-- `startSpan(name, parentSpan?, options?)` — Creates a span and returns the SDK `Span` from `@opentelemetry/sdk-trace`. Span names are sanitized to `[a-zA-Z0-9-_/]`. `parentSpan` accepts any API `Span` (for example from `trace.getSpan(context)` or `trace.wrapSpanContext(...)`), so callers need no cast. When neither `parentSpan` nor `options` is given, the span is `SpanKind.INTERNAL` and carries `http.request.method=BACKEND` and a synthetic `http.route` attribute with the value `${serviceName}-${version}-${sanitizedSpanName}`. Passing a `parentSpan`, an `options` object (e.g. `{ kind: SpanKind.SERVER }`), or both forwards them to the OpenTelemetry SDK instead and skips those synthetic attributes, because the caller then describes the span itself. Generic HTTP dashboards that group by `http.request.method`/`http.route` count these spans as `BACKEND` requests with a synthetic route; this is intentional and consumed by otel-light.
+- `startSpan(name, parentSpan?, options?)` — Creates a span and returns the SDK `Span` from `@opentelemetry/sdk-trace`. Span names are sanitized to `[a-zA-Z0-9-_/]`. `parentSpan` accepts any API `Span` (for example from `trace.getSpan(context)` or `trace.wrapSpanContext(...)`), so callers need no cast. `options` is the full OpenTelemetry API `SpanOptions`: `kind`, `attributes`, `links`, `startTime` and `root`. `links` and `startTime` can only be set at span creation, not afterwards; `attributes` can also be added after creation with `span.setAttribute(...)`. When neither `parentSpan` nor `options` is given, the span is `SpanKind.INTERNAL` and carries `http.request.method=BACKEND` and a synthetic `http.route` attribute with the value `${serviceName}-${version}-${sanitizedSpanName}`. Passing a `parentSpan`, an `options` object (e.g. `{ kind: SpanKind.SERVER }`), or both forwards them to the OpenTelemetry SDK instead and skips those synthetic attributes, because the caller then describes the span itself. Generic HTTP dashboards that group by `http.request.method`/`http.route` count these spans as `BACKEND` requests with a synthetic route; this is intentional and consumed by otel-light.
 - `static updateHttpHeader<T extends object = Record<string, string>>(context, headers?)` — Injects the W3C trace context of `context` into an HTTP headers object for propagation to downstream services, and returns that same object (a new one when omitted). Only `traceparent` and `tracestate` are injected: the propagation context is built from the span alone, so baggage and other active-context values are **not** propagated and an existing `baggage` header is left untouched.
 - `shutdown()` — Flushes buffered spans and shuts the tracer provider down. Idempotent.
 - `forceFlush()` — Flushes buffered spans to the collector without shutting the provider down; resolves immediately when no collector is configured. Use it at checkpoints in short-lived jobs and serverless handlers.
+
+```typescript
+import { SpanKind } from "@opentelemetry/api";
+
+const span = tracer.startSpan("checkout", undefined, {
+  kind: SpanKind.CLIENT,
+  attributes: { "checkout.channel": "web" },
+  links: [{ context: upstreamSpan.spanContext() }],
+  startTime: new Date(Date.now() - 250),
+});
+span.setAttribute("checkout.items", 3); // attributes can also be added afterwards
+span.end();
+```
+
+#### Trace sampling
+
+`OPENTELEMETRY_TRACES_SAMPLER` selects the SDK sampler used by the tracer provider. The default `parentbased_always_on` is the SDK default: root spans are always sampled and children follow their parent.
+
+| Value                      | SDK sampler                                            |
+| -------------------------- | ------------------------------------------------------ |
+| `always_on`                | `AlwaysOnSampler`                                      |
+| `always_off`               | `AlwaysOffSampler`                                     |
+| `traceidratio`             | `TraceIdRatioBasedSampler`                             |
+| `parentbased_always_on`    | `ParentBasedSampler` (root `AlwaysOnSampler`)          |
+| `parentbased_always_off`   | `ParentBasedSampler` (root `AlwaysOffSampler`)         |
+| `parentbased_traceidratio` | `ParentBasedSampler` (root `TraceIdRatioBasedSampler`) |
+
+`OPENTELEMETRY_TRACES_SAMPLER_ARG` is the sampling ratio in `[0,1]` and is only used by `traceidratio` and `parentbased_traceidratio`; `0` samples nothing and `1` samples everything. It is ignored by the other samplers. An invalid sampler value logs one `console.warn` and falls back to `parentbased_always_on`; a missing or invalid ratio logs one `console.warn` and falls back to `1`.
+
+```typescript
+const tracer = new StandardTracer({
+  ...config,
+  OPENTELEMETRY_TRACES_SAMPLER: "parentbased_traceidratio",
+  OPENTELEMETRY_TRACES_SAMPLER_ARG: 0.1, // sample 10% of root traces
+});
+```
 
 **Trace batch tunables and loss window**
 
@@ -247,11 +323,23 @@ const cpuGauge = meter.createObservableGauge(
   (result) => result.observe(cpuPercent),
   "Current CPU usage",
 );
+
+const queueProcessed = meter.createObservableCounter(
+  "queue.processed",
+  (result) => result.observe(processedJobs),
+  { description: "Processed jobs", unit: "1" },
+);
+
+const queueDepth = meter.createObservableUpDownCounter(
+  "queue.depth",
+  (result) => result.observe(backlogSize),
+  { description: "Queue backlog", unit: "{item}" },
+);
 ```
 
 **Instrument options**
 
-All four factories accept an optional options argument with the standard OpenTelemetry `MetricOptions` — `description`, `unit`, `valueType` and `advice` — forwarded to the underlying `Meter`. `createObservableGauge` also keeps accepting a description string as its third argument.
+All factories accept an optional options argument with the standard OpenTelemetry `MetricOptions` — `description`, `unit`, `valueType` and `advice` — forwarded to the underlying `Meter`. `createObservableGauge` also keeps accepting a description string as its third argument.
 
 These options matter most for histograms: the SDK default bucket boundaries (`[0, 5, 10, 25, 50, 75, 100, 250, 500, 750, 1000, 2500, 5000, 7500, 10000]`) are millisecond-oriented. A consumer that records seconds with the defaults puts every value below 5 s into the first bucket, which makes percentiles meaningless. The OpenTelemetry semantic conventions for `http.server.request.duration` therefore expect seconds and these boundaries:
 
@@ -286,9 +374,10 @@ meter.createObservableGauge(
 
 **Metric naming**
 
-- Counters, up-down counters and histograms are exported as `${serviceName}.${key}`.
+- Counters, up-down counters, histograms, observable counters and observable up-down counters are exported as `${serviceName}.${key}`.
 - A histogram created with `{ unprefixed: true }` is exported exactly as `key`; only histograms have this opt-out.
 - Observable gauges are always exported exactly as `key` (never prefixed), including when an options object is passed.
+- Instruments created through `getMeter()` are exported exactly as named; that raw accessor never prefixes.
 
 These defaults are unchanged: existing metric names keep working.
 
@@ -298,6 +387,9 @@ These defaults are unchanged: existing metric names keep working.
 - `createUpDownCounter(key, options?)` — Creates an `UpDownCounter` named `${serviceName}.${key}`.
 - `createHistogram(key, options?)` — Creates a `Histogram` named `${serviceName}.${key}`; with `{ unprefixed: true }` the histogram is created exactly as `key`, without the service-name prefix. Options also accept the OTel instrument options (`description`, `unit`, `valueType`, `advice`).
 - `createObservableGauge(key, callback, descriptionOrOptions?)` — Creates an `ObservableGauge` named `key` with a callback. The third argument is an optional description string or an options object (`description`, `unit`, `valueType`, `advice`).
+- `createObservableCounter(key, callback, options?)` — Creates an `ObservableCounter` named `${serviceName}.${key}` with a callback, for monotonically increasing asynchronous values (for example processed jobs). `callback` is `(observableResult) => void`; the instrument options are forwarded.
+- `createObservableUpDownCounter(key, callback, options?)` — Creates an `ObservableUpDownCounter` named `${serviceName}.${key}` with a callback, for values that can increase or decrease (for example queue/backlog sizes). `callback` is `(observableResult) => void`; the instrument options are forwarded.
+- `getMeter()` — Returns the underlying OTel `Meter` for advanced instruments. Instruments created through it are exported exactly as named, without the `${serviceName}.` prefix.
 - `shutdown()` — Flushes buffered metrics and shuts the meter provider down. Idempotent.
 - `forceFlush()` — Flushes buffered metrics to the collector without shutting the meter provider down; resolves immediately when no collector is configured. Use it at checkpoints in short-lived jobs and serverless handlers.
 
@@ -308,6 +400,7 @@ OpenTelemetry's global API accepts one provider per signal per process, and the 
 - **One provider per signal per process.** The first `StandardTracer`, configured `StandardLogger` and configured `StandardMeter` created in a process each register their provider globally. Global-API calls (`trace.getTracer`, `logs.getLogger`, `metrics.getMeter`) resolve to those first providers until they shut down.
 - **Additional instances keep working, locally.** A second instance does not replace the global provider: it logs a `console.warn` and still exports through its own provider, with its own `service.name`/`service.version`. Its records/spans/metrics are never attributed to another service.
 - **Re-initialisation.** Calling `StandardLogger.initOTel()` again on the same instance flushes and shuts down the previous provider (its buffered records are exported), then registers the new one as the global provider if possible. Await the returned promise when re-initializing.
+- **Single-instance contract for tracer and meter.** `StandardTracer` and `StandardMeter` are configured once, in their constructor; they have no re-initialisation method. Create one per process. A second instance keeps working locally but never replaces the global provider — only `StandardLogger` supports re-initialisation.
 - **Serialised init/shutdown (`StandardLogger`).** `initOTel()` and `shutdown()` run through one promise queue, in call order, and never interleave. An init queued while a shutdown is in flight waits for it, then creates and registers its provider; a shutdown queued behind an init shuts the provider created by that init. The queue survives validation failures (only the failing operation rejects), and `forceFlush()` is non-terminal: it never changes the lifecycle state or the global registration.
 - **Shutdown.** `shutdown()` flushes pending telemetry, shuts the provider down and is idempotent. If the instance owns the global provider, it also calls `trace.disable()` / `logs.disable()` / `metrics.disable()`, returning the global API to Noop and allowing a later instance to register again. Shutting down a non-owner leaves the global provider untouched. After `StandardLogger.shutdown()`, `getLogger()` is `undefined`.
 - **Context propagation.** One `AsyncLocalStorageContextManager` is installed per process on the first `StandardTracer` construction, only when no other context manager is registered. It stays active for the process lifetime (it is never disabled), so re-initialisation keeps working.
@@ -362,7 +455,7 @@ Each `shutdown()` flushes pending telemetry to the collector before resolving; t
 
 ### createOTelResource
 
-Shared internal utility that creates an `OTelResource` with `service.name`, `service.version`, and `network.local.address` (hostname). The hostname is cached at module load time to minimize system calls.
+Shared internal utility that creates an `OTelResource` with `service.name`, `service.version` and `network.local.address` (hostname), plus the optional `service.instance.id`, `deployment.environment.name` and custom resource attributes. The hostname is cached at module load time to minimize system calls. The same resource is used by `StandardTracer`, `StandardLogger` and `StandardMeter`.
 
 ```typescript
 // Used internally by StandardTracer, StandardLogger, and StandardMeter
@@ -379,7 +472,7 @@ Application
                            └── PeriodicExportingMetricReader
 ```
 
-All three signals share the same service identity (name + version) and resource attributes via `createOTelResource`. Export is optional per signal — only configured when the corresponding `OPENTELEMETRY_COLLECTOR_HTTP_*` endpoint is set.
+All three signals share the same service identity (name + version), the optional instance id and deployment environment, and any custom resource attributes via `createOTelResource`. Export is optional per signal — only configured when the corresponding `OPENTELEMETRY_COLLECTOR_HTTP_*` endpoint is set.
 
 ## Dependencies
 
