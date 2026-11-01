@@ -2,6 +2,7 @@ import type { ConfigOTelInterface } from "../models/ConfigOTelInterface";
 import {
   normalizeConsoleLogMode,
   normalizeExportIntervalSeconds,
+  normalizeLogLevel,
   normalizePositiveInteger,
   validateServiceIdentity,
 } from "./configValidation";
@@ -135,6 +136,30 @@ describe("configValidation", () => {
       expect(warnSpy).toHaveBeenCalledTimes(1);
       expect(warnSpy).toHaveBeenCalledWith(
         expect.stringContaining("OPENTELEMETRY_CONSOLE_LOG_MODE"),
+      );
+    });
+  });
+
+  describe("normalizeLogLevel", () => {
+    it("passes the five valid levels through", () => {
+      expect(normalizeLogLevel("trace")).toBe("trace");
+      expect(normalizeLogLevel("debug")).toBe("debug");
+      expect(normalizeLogLevel("info")).toBe("info");
+      expect(normalizeLogLevel("warn")).toBe("warn");
+      expect(normalizeLogLevel("error")).toBe("error");
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+
+    it("defaults to info when undefined without warning", () => {
+      expect(normalizeLogLevel(undefined)).toBe("info");
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+
+    it("warns once and defaults to info for invalid values", () => {
+      expect(normalizeLogLevel("verbose")).toBe("info");
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("OPENTELEMETRY_LOG_LEVEL"),
       );
     });
   });
