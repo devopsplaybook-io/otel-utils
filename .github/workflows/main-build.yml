@@ -8,7 +8,10 @@ on:
 
 jobs:
   npm-merge:
-    uses: devopsplaybook-io/common-utils/.github/workflows/reusable-npm-merge.yml@main
+    # Pinned to common-utils main commit 608b30f62c685c5cd41661ff3cf14692ced42b16 (2026-11-01):
+    # common-utils publishes no tags/releases. Bump this SHA deliberately after
+    # reviewing common-utils changes.
+    uses: devopsplaybook-io/common-utils/.github/workflows/reusable-npm-merge.yml@608b30f62c685c5cd41661ff3cf14692ced42b16
     with:
       npm_package_name: "@devopsplaybook.io/otel-utils"
       node_version: "22"

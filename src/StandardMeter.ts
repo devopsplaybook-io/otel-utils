@@ -193,8 +193,7 @@ export class StandardMeter {
 
   public createObservableGauge(
     key: string,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    callback: (observableResult: any) => void,
+    callback: ObservableCallback,
     descriptionOrOptions?: string | MetricOptions,
   ): ObservableGauge {
     const observableGauge = this.meter.createObservableGauge(

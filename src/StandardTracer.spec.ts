@@ -509,6 +509,36 @@ describe("StandardTracer", () => {
       );
     });
 
+    it("re-registers after the global provider was disabled externally", async () => {
+      makeTracer(tracerConfig("svc-1", "http://collector-1/v1/traces"));
+      trace.disable();
+
+      const second = makeTracer(
+        tracerConfig("svc-2", "http://collector-2/v1/traces"),
+      );
+
+      trace.getTracer("global").startSpan("global-span").end();
+      await second.shutdown();
+
+      expect(spanNames(exporterAt(1))).toContain("global-span");
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+
+    it("warns and keeps an externally registered global provider", () => {
+      const external = new TracerProvider();
+      expect(trace.setGlobalTracerProvider(external)).toBe(true);
+
+      makeTracer(tracerConfig("svc-1", "http://collector-1/v1/traces"));
+
+      expect(registeredTracerProvider()).toBe(external);
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "A global tracer provider is already registered",
+        ),
+      );
+    });
+
     it("routes global API spans to the first registered provider", async () => {
       const first = makeTracer(
         tracerConfig("svc-1", "http://collector-1/v1/traces"),

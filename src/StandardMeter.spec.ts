@@ -352,6 +352,34 @@ describe("StandardMeter", () => {
     );
   });
 
+  it("re-registers after the global provider was disabled externally", async () => {
+    makeMeter(meterConfig("metric-a", "http://collector-1/v1/metrics"));
+    metrics.disable();
+
+    const second = makeMeter(
+      meterConfig("metric-b", "http://collector-2/v1/metrics"),
+    );
+
+    metrics.getMeter("global").createCounter("global.counter").add(1);
+    await second.shutdown();
+
+    expect(metricNames(exporterAt(1))).toContain("global.counter");
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it("warns and keeps an externally registered global provider", async () => {
+    const external = new MeterProvider();
+    expect(metrics.setGlobalMeterProvider(external)).toBe(true);
+
+    makeMeter(meterConfig("metric-a", "http://collector-1/v1/metrics"));
+
+    expect(metrics.getMeterProvider()).toBe(external);
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("A global meter provider is already registered"),
+    );
+  });
+
   it("owner shutdown releases the global provider so a new meter can register", async () => {
     const first = makeMeter(
       meterConfig("metric-a", "http://collector-1/v1/metrics"),
