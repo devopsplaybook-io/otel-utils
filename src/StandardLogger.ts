@@ -30,10 +30,41 @@ export class StandardLogger implements StandardLoggerInterface {
   private serviceVersion?: string;
   private serviceName?: string;
   private ownsGlobalProvider = false;
-  private shutdownPromise?: Promise<void>;
+  private operationQueue: Promise<void> = Promise.resolve();
   private consoleMode: ConsoleLogMode = "always";
 
-  public async initOTel(config: ConfigOTelInterface): Promise<void> {
+  public initOTel(config: ConfigOTelInterface): Promise<void> {
+    return this.enqueue(() => this.doInitOTel(config));
+  }
+
+  public shutdown(): Promise<void> {
+    return this.enqueue(() => this.releaseProvider());
+  }
+
+  public forceFlush(): Promise<void> {
+    return this.loggerProvider?.forceFlush() ?? Promise.resolve();
+  }
+
+  public getLogger(): OTelLogger | undefined {
+    return this.logger;
+  }
+
+  public createModuleLogger(moduleName: string): ModuleLogger {
+    return new ModuleLogger(moduleName, this, {
+      consoleMode: this.consoleMode,
+    });
+  }
+
+  private enqueue(operation: () => Promise<void>): Promise<void> {
+    const result = this.operationQueue.then(operation, operation);
+    this.operationQueue = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  }
+
+  private async doInitOTel(config: ConfigOTelInterface): Promise<void> {
     // Validate before releasing the previous provider: a bad re-init must keep
     // the working provider in place.
     validateServiceIdentity(config);
@@ -44,7 +75,6 @@ export class StandardLogger implements StandardLoggerInterface {
     if (this.loggerProvider) {
       await this.releaseProvider();
     }
-    this.shutdownPromise = undefined;
     this.serviceName = config.SERVICE_ID;
     this.serviceVersion = config.VERSION;
 
@@ -92,23 +122,6 @@ export class StandardLogger implements StandardLoggerInterface {
       `${this.serviceName}:${this.serviceVersion}`,
     );
     this.registerGlobalProvider();
-  }
-
-  public shutdown(): Promise<void> {
-    if (!this.shutdownPromise) {
-      this.shutdownPromise = this.releaseProvider();
-    }
-    return this.shutdownPromise;
-  }
-
-  public getLogger(): OTelLogger | undefined {
-    return this.logger;
-  }
-
-  public createModuleLogger(moduleName: string): ModuleLogger {
-    return new ModuleLogger(moduleName, this, {
-      consoleMode: this.consoleMode,
-    });
   }
 
   private registerGlobalProvider(): void {

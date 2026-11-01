@@ -79,6 +79,19 @@ function exportedBodies(exporter: MockLogExporter): unknown[] {
   return exporter.getExportedRecords().map((record) => record.body);
 }
 
+interface Deferred {
+  promise: Promise<void>;
+  resolve: () => void;
+}
+
+function deferred(): Deferred {
+  let resolve!: () => void;
+  const promise = new Promise<void>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
 function collectorConfig(logsUrl: string): ConfigOTelInterface {
   return {
     SERVICE_ID: "log-service",
@@ -411,6 +424,76 @@ describe("StandardLogger", () => {
           "[billing] after-invalid-reinit",
         ]),
       );
+    });
+  });
+
+  describe("lifecycle queue", () => {
+    it("registers the new provider when an init is queued behind an in-flight shutdown", async () => {
+      const logger = makeLogger();
+      await logger.initOTel(collectorConfig("http://collector-1/v1/logs"));
+      const firstProvider = logs.getLoggerProvider();
+      const gate = deferred();
+      exporterAt(0).shutdown.mockImplementation(() => gate.promise);
+
+      const shutdownPromise = logger.shutdown();
+      const reinitPromise = logger.initOTel(
+        collectorConfig("http://collector-2/v1/logs"),
+      );
+
+      gate.resolve();
+      await Promise.all([shutdownPromise, reinitPromise]);
+
+      expect(logs.getLoggerProvider()).toBeInstanceOf(LoggerProvider);
+      expect(logs.getLoggerProvider()).not.toBe(firstProvider);
+      expect(logger.getLogger()).toBeDefined();
+      await logger.shutdown();
+    });
+
+    it("shuts the provider of an init queued behind a slow shutdown", async () => {
+      const logger = makeLogger();
+      await logger.initOTel(collectorConfig("http://collector-1/v1/logs"));
+      const gate = deferred();
+      exporterAt(0).shutdown.mockImplementation(() => gate.promise);
+
+      const reinitPromise = logger.initOTel(
+        collectorConfig("http://collector-2/v1/logs"),
+      );
+      const shutdownPromise = logger.shutdown();
+
+      gate.resolve();
+      await Promise.all([reinitPromise, shutdownPromise]);
+
+      expect(logger.getLogger()).toBeUndefined();
+      expect(logs.getLoggerProvider()).not.toBeInstanceOf(LoggerProvider);
+      expect(exporterAt(1).shutdown).toHaveBeenCalledTimes(1);
+
+      await expect(logger.shutdown()).resolves.toBeUndefined();
+      expect(exporterAt(1).shutdown).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("forceFlush", () => {
+    it("flushes buffered records without shutting the provider down", async () => {
+      const logger = makeLogger();
+      await logger.initOTel({
+        ...collectorConfig("http://collector/v1/logs"),
+        OPENTELEMETRY_COLLECTOR_EXPORT_LOGS_INTERVAL_SECONDS: 5,
+      });
+      logger.createModuleLogger("billing").info("flushed");
+
+      await logger.forceFlush();
+
+      expect(exportedBodies(exporterAt(0))).toContain("[billing] flushed");
+      expect(exporterAt(0).shutdown).not.toHaveBeenCalled();
+      expect(logger.getLogger()).toBeDefined();
+      await logger.shutdown();
+    });
+
+    it("resolves without a provider", async () => {
+      const logger = makeLogger();
+
+      await expect(logger.forceFlush()).resolves.toBeUndefined();
+      expect(mockExporterConstructor).not.toHaveBeenCalled();
     });
   });
 
