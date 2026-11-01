@@ -256,6 +256,31 @@ describe("StandardTracer", () => {
     });
   });
 
+  describe("forceFlush", () => {
+    it("flushes buffered spans without shutting the provider down", async () => {
+      const tracer = makeTracer(
+        tracerConfig("flush-service", "http://collector/v1/traces"),
+      );
+      tracer.startSpan("flushed-span").end();
+
+      await tracer.forceFlush();
+
+      expect(spanNames(exporterAt(0))).toContain("flushed-span");
+      expect(exporterAt(0).shutdown).not.toHaveBeenCalled();
+
+      tracer.startSpan("after-flush").end();
+      await tracer.forceFlush();
+      expect(spanNames(exporterAt(0))).toContain("after-flush");
+      await tracer.shutdown();
+    });
+
+    it("resolves without a collector", async () => {
+      const tracer = makeTracer(tracerConfig("plain-service"));
+
+      await expect(tracer.forceFlush()).resolves.toBeUndefined();
+    });
+  });
+
   describe("service identity validation", () => {
     it("rejects an empty SERVICE_ID", () => {
       expect(

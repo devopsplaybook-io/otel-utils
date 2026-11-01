@@ -411,6 +411,31 @@ describe("StandardMeter", () => {
     });
   });
 
+  describe("forceFlush", () => {
+    it("flushes recorded metrics without shutting the meter down", async () => {
+      const meter = makeMeter(
+        meterConfig("metric-service", "http://collector/v1/metrics"),
+      );
+      const exporter = exporterAt(0);
+      const shutdownSpy = jest.spyOn(exporter, "shutdown");
+      meter.createCounter("requests.total").add(1);
+
+      await meter.forceFlush();
+
+      expect(metricNames(exporter)).toContain("metric-service.requests.total");
+      expect(shutdownSpy).not.toHaveBeenCalled();
+
+      await meter.shutdown();
+      expect(shutdownSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it("resolves without a collector", async () => {
+      const meter = makeMeter(meterConfig("metric-service"));
+
+      await expect(meter.forceFlush()).resolves.toBeUndefined();
+    });
+  });
+
   describe("service identity validation", () => {
     it("rejects an empty SERVICE_ID without creating an exporter", () => {
       expect(

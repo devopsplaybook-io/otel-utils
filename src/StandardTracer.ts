@@ -103,6 +103,10 @@ export class StandardTracer {
     return this.shutdownPromise;
   }
 
+  public forceFlush(): Promise<void> {
+    return this.traceProvider.forceFlush();
+  }
+
   public startSpan(
     name: string,
     parentSpan?: ApiSpan,

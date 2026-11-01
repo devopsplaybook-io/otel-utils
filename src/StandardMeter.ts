@@ -96,6 +96,10 @@ export class StandardMeter {
     return this.shutdownPromise;
   }
 
+  public forceFlush(): Promise<void> {
+    return this.meterProvider.forceFlush();
+  }
+
   public createCounter(key: string, options?: MetricOptions): Counter {
     return this.meter.createCounter(`${this.serviceName}.${key}`, options);
   }

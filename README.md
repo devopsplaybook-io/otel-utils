@@ -62,6 +62,7 @@ span.end();
 - `startSpan(name, parentSpan?, options?)` — Creates a span and returns the SDK `Span` from `@opentelemetry/sdk-trace`. Span names are sanitized to `[a-zA-Z0-9-_/]`. `parentSpan` accepts any API `Span` (for example from `trace.getSpan(context)` or `trace.wrapSpanContext(...)`), so callers need no cast. When neither `parentSpan` nor `options` is given, the span is `SpanKind.INTERNAL` and carries `http.request.method=BACKEND` and a synthetic `http.route` attribute with the value `${serviceName}-${version}-${sanitizedSpanName}`. Passing a `parentSpan`, an `options` object (e.g. `{ kind: SpanKind.SERVER }`), or both forwards them to the OpenTelemetry SDK instead and skips those synthetic attributes, because the caller then describes the span itself. Generic HTTP dashboards that group by `http.request.method`/`http.route` count these spans as `BACKEND` requests with a synthetic route; this is intentional and consumed by otel-light.
 - `static updateHttpHeader<T extends object = Record<string, string>>(context, headers?)` — Injects the W3C trace context of `context` into an HTTP headers object for propagation to downstream services, and returns that same object (a new one when omitted). Only `traceparent` and `tracestate` are injected: the propagation context is built from the span alone, so baggage and other active-context values are **not** propagated and an existing `baggage` header is left untouched.
 - `shutdown()` — Flushes buffered spans and shuts the tracer provider down. Idempotent.
+- `forceFlush()` — Flushes buffered spans to the collector without shutting the provider down; resolves immediately when no collector is configured. Use it at checkpoints in short-lived jobs and serverless handlers.
 
 ### StandardLogger
 
@@ -79,10 +80,11 @@ moduleLog.info("Hello world");
 
 **Methods:**
 
-- `initOTel(config)` — Initializes the logger provider and optional OTLP exporter, and registers the provider globally when a logs endpoint is configured and no other logger provider is registered. Returns `Promise<void>`: the first call initializes synchronously; await it when re-initializing, because a previous provider is flushed and shut down first.
+- `initOTel(config)` — Initializes the logger provider and optional OTLP exporter, and registers the provider globally when a logs endpoint is configured and no other logger provider is registered. Returns `Promise<void>`; a previous provider is flushed and shut down first. Queued in call order with `shutdown()` — see [Provider lifecycle](#provider-lifecycle).
 - `getLogger()` — Returns the underlying OTel `Logger` or `undefined` (also `undefined` after `shutdown()`).
 - `createModuleLogger(moduleName)` — Creates a `ModuleLogger` scoped to a module name.
-- `shutdown()` — Flushes buffered log records and shuts the logger provider down. Idempotent. No-op when no logs endpoint is configured.
+- `shutdown()` — Flushes buffered log records and shuts the logger provider down. Idempotent. No-op when no logs endpoint is configured. Queued in call order with `initOTel()`.
+- `forceFlush()` — Flushes buffered log records to the collector without shutting the provider down; resolves immediately when no logger provider exists. Use it at checkpoints in short-lived jobs and serverless handlers.
 
 **Batch tunables and loss window**
 
@@ -211,6 +213,7 @@ These defaults are unchanged: existing metric names keep working.
 - `createHistogram(key, options?)` — Creates a `Histogram` named `${serviceName}.${key}`; with `{ unprefixed: true }` the histogram is created exactly as `key`, without the service-name prefix. Options also accept the OTel instrument options (`description`, `unit`, `valueType`, `advice`).
 - `createObservableGauge(key, callback, descriptionOrOptions?)` — Creates an `ObservableGauge` named `key` with a callback. The third argument is an optional description string or an options object (`description`, `unit`, `valueType`, `advice`).
 - `shutdown()` — Flushes buffered metrics and shuts the meter provider down. Idempotent.
+- `forceFlush()` — Flushes buffered metrics to the collector without shutting the meter provider down; resolves immediately when no collector is configured. Use it at checkpoints in short-lived jobs and serverless handlers.
 
 ## Provider lifecycle
 
@@ -219,6 +222,7 @@ OpenTelemetry's global API accepts one provider per signal per process, and the 
 - **One provider per signal per process.** The first `StandardTracer`, configured `StandardLogger` and configured `StandardMeter` created in a process each register their provider globally. Global-API calls (`trace.getTracer`, `logs.getLogger`, `metrics.getMeter`) resolve to those first providers until they shut down.
 - **Additional instances keep working, locally.** A second instance does not replace the global provider: it logs a `console.warn` and still exports through its own provider, with its own `service.name`/`service.version`. Its records/spans/metrics are never attributed to another service.
 - **Re-initialisation.** Calling `StandardLogger.initOTel()` again on the same instance flushes and shuts down the previous provider (its buffered records are exported), then registers the new one as the global provider if possible. Await the returned promise when re-initializing.
+- **Serialised init/shutdown (`StandardLogger`).** `initOTel()` and `shutdown()` run through one promise queue, in call order, and never interleave. An init queued while a shutdown is in flight waits for it, then creates and registers its provider; a shutdown queued behind an init shuts the provider created by that init. The queue survives validation failures (only the failing operation rejects), and `forceFlush()` is non-terminal: it never changes the lifecycle state or the global registration.
 - **Shutdown.** `shutdown()` flushes pending telemetry, shuts the provider down and is idempotent. If the instance owns the global provider, it also calls `trace.disable()` / `logs.disable()` / `metrics.disable()`, returning the global API to Noop and allowing a later instance to register again. Shutting down a non-owner leaves the global provider untouched. After `StandardLogger.shutdown()`, `getLogger()` is `undefined`.
 - **Context propagation.** One `AsyncLocalStorageContextManager` is installed per process on the first `StandardTracer` construction, only when no other context manager is registered. It stays active for the process lifetime (it is never disabled), so re-initialisation keeps working.
 
@@ -226,19 +230,36 @@ OpenTelemetry's global API accepts one provider per signal per process, and the 
 
 `StandardTracer`, `StandardLogger` and `StandardMeter` buffer telemetry: `BatchSpanProcessor`, `BatchLogRecordProcessor` and `PeriodicExportingMetricReader` hold data until their next export cycle. On process exit that buffered data would be lost, so flush it on `SIGTERM`/`SIGINT`.
 
-The opt-in `registerShutdownHooks` helper does this for every configured provider and exits the process with code 0 after flushing:
+The opt-in `registerShutdownHooks` helper does this for every configured provider and, by default, exits the process with code 0 once the flush completes or times out:
 
 ```typescript
 import { registerShutdownHooks } from "@devopsplaybook.io/otel-utils";
 
-const cleanup = registerShutdownHooks([tracer, logger, meter]);
+const cleanup = registerShutdownHooks([tracer, logger, meter], {
+  signals: ["SIGTERM", "SIGINT"], // default
+  timeoutMillis: 10_000, // default
+  exit: true, // default
+});
 // later, if the application manages its own signals:
 // cleanup();
 ```
 
-Register it once, with all configured providers. A second signal received while shutting down does not exit or flush again. The returned function only removes the signal listeners.
+Options:
 
-For custom flows, `shutdownAll` flushes every provider and always resolves — a failing provider is reported with `console.warn` and does not block the others:
+- `signals` — signals to listen to, default `["SIGTERM", "SIGINT"]`; duplicates are removed. It replaces the defaults rather than extending them.
+- `timeoutMillis` — upper bound of the flush, default 10 000 ms; non-integer or non-positive values fall back to the default. Keep it below the container's `terminationGracePeriodSeconds` (30 s by default in Kubernetes) and consistent with the providers' export timeouts (30 s SDK default), otherwise the pod is SIGKILLed mid-flush. When it elapses, one `[otel-utils] shutdown timed out after ...` warning is logged and the process continues (or exits with code 0) without waiting for the remaining providers.
+- `exit` — `true` (default) exits with code 0 after the flush or timeout; `false` only flushes and never calls `process.exit`, for applications that own HTTP draining and database shutdown.
+
+Signal semantics:
+
+- Handlers use `process.on`, not `process.once`. The first signal starts one shutdown; any later `SIGTERM`/`SIGINT` (the same one or the other) is ignored while it runs — no re-flush and no early termination, even when the flush is slow.
+- The listeners are removed when the flush completes (and by the returned cleanup function), so the process regains Node's default signal behaviour. `cleanup()` is idempotent, does not cancel an in-flight flush and removes only the listeners this call registered.
+
+Choose the helper that matches who owns the shutdown:
+
+- `registerShutdownHooks(providers)` — the library owns the signals and the process exit.
+- `registerShutdownHooks(providers, { exit: false })` — the application owns the shutdown sequence (drain HTTP, close the database, then exit) and uses the helper as one bounded telemetry-flush step; combine it with the returned `cleanup()`.
+- `shutdownAll(providers)` — a fully custom flow: it flushes every provider, has no timeout, always resolves (a failing provider is reported with `console.warn` and does not block the others) and never calls `process.exit`:
 
 ```typescript
 import { shutdownAll } from "@devopsplaybook.io/otel-utils";
@@ -246,6 +267,8 @@ import { shutdownAll } from "@devopsplaybook.io/otel-utils";
 await shutdownAll([tracer, logger, meter]);
 process.exit(0);
 ```
+
+To flush without shutting anything down or exiting — at a checkpoint in a short-lived job or a serverless handler — call `forceFlush()` on the tracer, logger or meter.
 
 Each `shutdown()` flushes pending telemetry to the collector before resolving; the methods are idempotent and can be called even when no collector was configured (they resolve immediately).
 
