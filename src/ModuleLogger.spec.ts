@@ -184,6 +184,20 @@ describe("ModuleLogger", () => {
     expectOnlyDefinedAttributes();
   });
 
+  it("falls back when an error value cannot be serialised", () => {
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+    loggerWithEmit().error("failed", circular);
+    expect(lastAttributes()["exception.message"]).toBe("[object Object]");
+
+    const unserialisable = () => undefined;
+    unserialisable.toString = () => {
+      throw new Error("no string form");
+    };
+    loggerWithEmit().error("failed", unserialisable);
+    expect(lastAttributes()["exception.message"]).toBe("Unknown error");
+  });
+
   it("adds no exception attributes without an error", () => {
     loggerWithEmit().error("failed");
     expect(lastAttributes()).toEqual({

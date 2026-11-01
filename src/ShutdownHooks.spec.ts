@@ -196,6 +196,39 @@ describe("registerShutdownHooks", () => {
     }
   });
 
+  it("ignores a provider that settles after the timeout already resolved the shutdown", async () => {
+    jest.useFakeTimers();
+    const exitSpy = jest
+      .spyOn(process, "exit")
+      .mockImplementation((() => undefined) as never);
+    const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+    const gate = deferred();
+    const provider = { shutdown: jest.fn(() => gate.promise) };
+    const sigtermListeners = process.listenerCount("SIGTERM");
+
+    const cleanup = registerShutdownHooks([provider], {
+      timeoutMillis: 25,
+      exit: false,
+    });
+    try {
+      process.emit("SIGTERM");
+      await jest.advanceTimersByTimeAsync(25);
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+
+      gate.resolve();
+      await jest.advanceTimersByTimeAsync(0);
+
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(exitSpy).not.toHaveBeenCalled();
+      expect(process.listenerCount("SIGTERM")).toBe(sigtermListeners);
+    } finally {
+      cleanup();
+      exitSpy.mockRestore();
+      warnSpy.mockRestore();
+      jest.useRealTimers();
+    }
+  });
+
   it("registers only the configured signals", () => {
     const provider = { shutdown: jest.fn().mockResolvedValue(undefined) };
     const sigtermListeners = process.listenerCount("SIGTERM");

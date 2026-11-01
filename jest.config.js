@@ -5,12 +5,20 @@ module.exports = {
       "@swc/jest",
       {
         jsc: {
-          target: "es2019",
+          target: "es2022",
         },
       },
     ],
   },
   coverageProvider: "v8",
+  coverageThreshold: {
+    global: {
+      statements: 96,
+      branches: 94,
+      functions: 100,
+      lines: 96,
+    },
+  },
   testMatch: ["/**/src/**/*.spec.(ts|js)"],
   testPathIgnorePatterns: ["/node_modules/", "/dist/"],
   testEnvironment: "node",

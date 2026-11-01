@@ -259,6 +259,38 @@ describe("StandardLogger", () => {
     );
   });
 
+  it("re-registers after the global logger provider was disabled externally", async () => {
+    const first = makeLogger();
+    await first.initOTel(collectorConfig("http://collector-1/v1/logs"));
+    logs.disable();
+
+    const second = makeLogger();
+    await second.initOTel(collectorConfig("http://collector-2/v1/logs"));
+
+    logs.getLogger("external-lib").emit({
+      body: "from-global",
+      severityNumber: SeverityNumber.INFO,
+    });
+    await second.shutdown();
+
+    expect(exportedBodies(exporterAt(1))).toContain("from-global");
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it("warns and keeps an externally registered global logger provider", async () => {
+    const external = new LoggerProvider();
+    expect(logs.setGlobalLoggerProvider(external)).toBe(true);
+
+    const logger = makeLogger();
+    await logger.initOTel(collectorConfig("http://collector-1/v1/logs"));
+
+    expect(logs.getLoggerProvider()).toBe(external);
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("A global logger provider is already registered"),
+    );
+  });
+
   it("re-initialisation flushes the previous provider and keeps records", async () => {
     const logger = makeLogger();
     await logger.initOTel(collectorConfig("http://collector-1/v1/logs"));

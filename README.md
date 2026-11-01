@@ -487,7 +487,7 @@ All three signals share the same service identity (name + version), the optional
 - `@opentelemetry/core` — W3C trace context propagation
 - `@opentelemetry/resources` / `@opentelemetry/semantic-conventions` — Resource attributes
 
-Dev-only `npm audit` advisories (such as those previously reported in the Jest toolchain via `js-yaml`/`sprintf-js`) are tracked by the regular dependency-update task, not addressed here. The current lockfile reports no vulnerabilities, with or without dev dependencies.
+Runtime dependencies are clean: `npm audit --omit=dev` reports no vulnerabilities. The full `npm audit` still reports 19 dev-only advisories in the Jest toolchain (`deepmerge`, `glob`, `minimatch`, `test-exclude` and Jest packages); they are tracked by the regular dependency-update task, not addressed here.
 
 ## Build
 
@@ -495,5 +495,7 @@ Dev-only `npm audit` advisories (such as those previously reported in the Jest t
 npm ci          # install the locked dependencies
 npm run build   # tsc → dist/, then type-check the specs
 npm run lint    # oxlint + Prettier check
-npm test        # Jest unit tests with coverage
+npm test        # Jest unit tests; enforces the coverage thresholds in jest.config.js
 ```
+
+`npm pack --dry-run` lists the published files (`LICENSE`, `README.md`, `package.json` and `dist/**`); the `prepack` script builds `dist` first, so the tarball always contains a fresh build.
