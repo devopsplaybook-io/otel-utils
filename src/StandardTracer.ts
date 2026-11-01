@@ -21,8 +21,13 @@ import {
   ATTR_HTTP_ROUTE,
 } from "@opentelemetry/semantic-conventions";
 import { ConfigOTelInterface } from "./models/ConfigOTelInterface";
-import { validateServiceIdentity } from "./utils/configValidation";
+import {
+  normalizeExportIntervalSeconds,
+  normalizePositiveInteger,
+  validateServiceIdentity,
+} from "./utils/configValidation";
 import { createOTelResource } from "./utils/createResource";
+import { buildCollectorExporterOptions } from "./utils/exporterConfig";
 
 let globalTracerProvider: TracerProvider | undefined;
 let contextManagerInitialized = false;
@@ -71,16 +76,35 @@ export class StandardTracer {
     const spanProcessors = [];
 
     if (config.OPENTELEMETRY_COLLECTOR_HTTP_TRACES) {
-      const exporterHeaders: Record<string, string> = {};
-      if (config.OPENTELEMETRY_COLLECT_AUTHORIZATION_HEADER) {
-        exporterHeaders["Authorization"] =
-          `Bearer ${config.OPENTELEMETRY_COLLECT_AUTHORIZATION_HEADER}`;
-      }
-      const exporter = new OTLPTraceExporter({
-        url: config.OPENTELEMETRY_COLLECTOR_HTTP_TRACES,
-        headers: exporterHeaders,
-      });
-      spanProcessors.push(new BatchSpanProcessor({ exporter }));
+      const exporter = new OTLPTraceExporter(
+        buildCollectorExporterOptions(
+          config.OPENTELEMETRY_COLLECTOR_HTTP_TRACES,
+          config,
+          "OPENTELEMETRY_COLLECTOR_HTTP_TRACES",
+        ),
+      );
+      spanProcessors.push(
+        new BatchSpanProcessor({
+          exporter,
+          scheduledDelayMillis:
+            normalizeExportIntervalSeconds(
+              config.OPENTELEMETRY_COLLECTOR_EXPORT_TRACES_INTERVAL_SECONDS,
+              5,
+            ) * 1000,
+          maxQueueSize: normalizePositiveInteger(
+            config.OPENTELEMETRY_COLLECTOR_EXPORT_TRACES_MAX_QUEUE_SIZE,
+            2048,
+          ),
+          maxExportBatchSize: normalizePositiveInteger(
+            config.OPENTELEMETRY_COLLECTOR_EXPORT_TRACES_MAX_BATCH_SIZE,
+            512,
+          ),
+          exportTimeoutMillis: normalizePositiveInteger(
+            config.OPENTELEMETRY_COLLECTOR_EXPORT_TRACES_TIMEOUT_MILLIS,
+            30000,
+          ),
+        }),
+      );
     }
     this.traceProvider = new TracerProvider({
       idGenerator: new AWSXRayIdGenerator(),

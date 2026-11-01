@@ -16,8 +16,11 @@ import {
 import { ConfigOTelInterface } from "./models/ConfigOTelInterface";
 import {
   normalizeExportIntervalSeconds,
+  normalizePositiveInteger,
+  resolveMetricExportTimeout,
   validateServiceIdentity,
 } from "./utils/configValidation";
+import { buildCollectorExporterOptions } from "./utils/exporterConfig";
 
 let globalMeterProvider: MeterProvider | undefined;
 
@@ -53,26 +56,32 @@ export class StandardMeter {
     let hasCollector = false;
     if (config.OPENTELEMETRY_COLLECTOR_HTTP_METRICS) {
       hasCollector = true;
-      const collectorOptions = {
-        url: config.OPENTELEMETRY_COLLECTOR_HTTP_METRICS,
-        headers: {} as Record<string, string>,
+      const metricExporter = new OTLPMetricExporter({
+        ...buildCollectorExporterOptions(
+          config.OPENTELEMETRY_COLLECTOR_HTTP_METRICS,
+          config,
+          "OPENTELEMETRY_COLLECTOR_HTTP_METRICS",
+        ),
         concurrencyLimit: 5,
-      };
-      if (config.OPENTELEMETRY_COLLECT_AUTHORIZATION_HEADER) {
-        collectorOptions.headers["Authorization"] =
-          `Bearer ${config.OPENTELEMETRY_COLLECT_AUTHORIZATION_HEADER}`;
-      }
-      const metricExporter = new OTLPMetricExporter(collectorOptions);
+      });
+      const exportIntervalMillis =
+        normalizeExportIntervalSeconds(
+          config.OPENTELEMETRY_COLLECTOR_EXPORT_METRICS_INTERVAL_SECONDS,
+          60,
+        ) * 1000;
       this.meterProvider = new MeterProvider({
         resource: createOTelResource(this.serviceName, this.serviceVersion),
         readers: [
           new PeriodicExportingMetricReader({
             exporter: metricExporter,
-            exportIntervalMillis:
-              normalizeExportIntervalSeconds(
-                config.OPENTELEMETRY_COLLECTOR_EXPORT_METRICS_INTERVAL_SECONDS,
-                60,
-              ) * 1000,
+            exportIntervalMillis,
+            exportTimeoutMillis: resolveMetricExportTimeout(
+              normalizePositiveInteger(
+                config.OPENTELEMETRY_COLLECTOR_EXPORT_METRICS_TIMEOUT_MILLIS,
+                30000,
+              ),
+              exportIntervalMillis,
+            ),
           }),
         ],
       });

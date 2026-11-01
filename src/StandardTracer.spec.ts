@@ -38,6 +38,35 @@ jest.mock("@opentelemetry/exporter-trace-otlp-http", () => {
   };
 });
 
+jest.mock("@opentelemetry/sdk-trace", () => {
+  const actual = jest.requireActual<typeof import("@opentelemetry/sdk-trace")>(
+    "@opentelemetry/sdk-trace",
+  );
+  const batchProcessorOptions: unknown[] = [];
+  class RecordingBatchSpanProcessor extends actual.BatchSpanProcessor {
+    constructor(
+      options: ConstructorParameters<typeof actual.BatchSpanProcessor>[0],
+    ) {
+      super(options);
+      batchProcessorOptions.push(options);
+    }
+  }
+  return {
+    ...actual,
+    BatchSpanProcessor: RecordingBatchSpanProcessor,
+    __batchProcessorOptions: batchProcessorOptions,
+  };
+});
+
+interface SdkTraceMock {
+  __batchProcessorOptions: unknown[];
+}
+
+function batchProcessorOptions(): unknown[] {
+  return (jest.requireMock("@opentelemetry/sdk-trace") as SdkTraceMock)
+    .__batchProcessorOptions;
+}
+
 interface ExportedSpan {
   name: string;
   resource: { attributes: Record<string, unknown> };
@@ -93,6 +122,7 @@ describe("StandardTracer", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    batchProcessorOptions().length = 0;
     trace.disable();
     warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
   });
@@ -230,6 +260,8 @@ describe("StandardTracer", () => {
       expect(mockExporterConstructor).toHaveBeenCalledWith({
         url: "http://collector:4318/v1/traces",
         headers: { Authorization: "Bearer secret" },
+        timeoutMillis: 10000,
+        compression: "none",
       });
 
       await exportTracer.shutdown();
@@ -246,6 +278,8 @@ describe("StandardTracer", () => {
       expect(mockExporterConstructor).toHaveBeenCalledWith({
         url: "http://collector:4318/v1/traces",
         headers: {},
+        timeoutMillis: 10000,
+        compression: "none",
       });
       await exportTracer.shutdown();
     });
@@ -253,6 +287,123 @@ describe("StandardTracer", () => {
     it("resolves without a collector", async () => {
       const plainTracer = makeTracer(tracerConfig("plain-service"));
       await expect(plainTracer.shutdown()).resolves.toBeUndefined();
+    });
+
+    it("forwards generic headers, request timeout and gzip compression", async () => {
+      const tracer = makeTracer({
+        ...tracerConfig("export-service", "https://collector/v1/traces"),
+        OPENTELEMETRY_COLLECTOR_HTTP_HEADERS: { "X-Tenant": "acme" },
+        OPENTELEMETRY_COLLECTOR_HTTP_TIMEOUT_MILLIS: 5000,
+        OPENTELEMETRY_COLLECTOR_HTTP_COMPRESSION: "gzip",
+      });
+
+      expect(mockExporterConstructor).toHaveBeenCalledWith({
+        url: "https://collector/v1/traces",
+        headers: { "X-Tenant": "acme" },
+        timeoutMillis: 5000,
+        compression: "gzip",
+      });
+      await tracer.shutdown();
+    });
+
+    it("rejects a malformed collector URL without creating an exporter", () => {
+      expect(() =>
+        makeTracer(tracerConfig("export-service", "ftp://collector/v1/traces")),
+      ).toThrow(
+        "[otel-utils] OPENTELEMETRY_COLLECTOR_HTTP_TRACES must be a valid http(s) URL",
+      );
+      expect(() =>
+        makeTracer(tracerConfig("export-service", "not a url")),
+      ).toThrow(
+        "[otel-utils] OPENTELEMETRY_COLLECTOR_HTTP_TRACES must be a valid http(s) URL",
+      );
+      expect(mockExporterConstructor).not.toHaveBeenCalled();
+    });
+
+    it("warns exactly once when a bearer token is sent over plain HTTP", () => {
+      makeTracer({
+        ...tracerConfig("export-service", "http://collector/v1/traces"),
+        OPENTELEMETRY_COLLECT_AUTHORIZATION_HEADER: "secret",
+      });
+
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      const message = warnSpy.mock.calls[0][0] as string;
+      expect(message).toContain("plain HTTP");
+      expect(message).not.toContain("secret");
+    });
+
+    it("does not warn for https with a bearer token", () => {
+      makeTracer({
+        ...tracerConfig("export-service", "https://collector/v1/traces"),
+        OPENTELEMETRY_COLLECT_AUTHORIZATION_HEADER: "secret",
+      });
+
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("trace batch tunables", () => {
+    it("passes the documented defaults to BatchSpanProcessor", () => {
+      makeTracer(tracerConfig("batch-service", "https://collector/v1/traces"));
+
+      expect(batchProcessorOptions()).toHaveLength(1);
+      expect(batchProcessorOptions()[0]).toEqual({
+        exporter: expect.anything(),
+        scheduledDelayMillis: 5000,
+        maxQueueSize: 2048,
+        maxExportBatchSize: 512,
+        exportTimeoutMillis: 30000,
+      });
+    });
+
+    it("passes configured batch values to BatchSpanProcessor", () => {
+      makeTracer({
+        ...tracerConfig("batch-service", "https://collector/v1/traces"),
+        OPENTELEMETRY_COLLECTOR_EXPORT_TRACES_INTERVAL_SECONDS: 2,
+        OPENTELEMETRY_COLLECTOR_EXPORT_TRACES_MAX_QUEUE_SIZE: 4096,
+        OPENTELEMETRY_COLLECTOR_EXPORT_TRACES_MAX_BATCH_SIZE: 1024,
+        OPENTELEMETRY_COLLECTOR_EXPORT_TRACES_TIMEOUT_MILLIS: 15000,
+      });
+
+      expect(batchProcessorOptions()[0]).toEqual({
+        exporter: expect.anything(),
+        scheduledDelayMillis: 2000,
+        maxQueueSize: 4096,
+        maxExportBatchSize: 1024,
+        exportTimeoutMillis: 15000,
+      });
+    });
+
+    it.each([0, -5, 0.5])(
+      "clamps the trace export interval of %p seconds to one second",
+      (interval) => {
+        makeTracer({
+          ...tracerConfig("batch-service", "https://collector/v1/traces"),
+          OPENTELEMETRY_COLLECTOR_EXPORT_TRACES_INTERVAL_SECONDS: interval,
+        });
+
+        expect(batchProcessorOptions()[0]).toEqual(
+          expect.objectContaining({ scheduledDelayMillis: 1000 }),
+        );
+      },
+    );
+
+    it("falls back to the documented defaults for invalid batch values", () => {
+      makeTracer({
+        ...tracerConfig("batch-service", "https://collector/v1/traces"),
+        OPENTELEMETRY_COLLECTOR_EXPORT_TRACES_INTERVAL_SECONDS: NaN,
+        OPENTELEMETRY_COLLECTOR_EXPORT_TRACES_MAX_QUEUE_SIZE: 0,
+        OPENTELEMETRY_COLLECTOR_EXPORT_TRACES_MAX_BATCH_SIZE: -1,
+        OPENTELEMETRY_COLLECTOR_EXPORT_TRACES_TIMEOUT_MILLIS: 1.5,
+      });
+
+      expect(batchProcessorOptions()[0]).toEqual({
+        exporter: expect.anything(),
+        scheduledDelayMillis: 5000,
+        maxQueueSize: 2048,
+        maxExportBatchSize: 512,
+        exportTimeoutMillis: 30000,
+      });
     });
   });
 
