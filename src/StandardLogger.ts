@@ -7,11 +7,13 @@ import {
 import type {
   ConfigOTelInterface,
   ConsoleLogMode,
+  LogLevel,
 } from "./models/ConfigOTelInterface";
 import { createOTelResource } from "./utils/createResource";
 import {
   normalizeConsoleLogMode,
   normalizeExportIntervalSeconds,
+  normalizeLogLevel,
   normalizePositiveInteger,
   validateServiceIdentity,
 } from "./utils/configValidation";
@@ -32,6 +34,7 @@ export class StandardLogger implements StandardLoggerInterface {
   private ownsGlobalProvider = false;
   private operationQueue: Promise<void> = Promise.resolve();
   private consoleMode: ConsoleLogMode = "always";
+  private logLevel: LogLevel = "info";
 
   public initOTel(config: ConfigOTelInterface): Promise<void> {
     return this.enqueue(() => this.doInitOTel(config));
@@ -49,10 +52,16 @@ export class StandardLogger implements StandardLoggerInterface {
     return this.logger;
   }
 
+  public getConsoleMode(): ConsoleLogMode {
+    return this.consoleMode;
+  }
+
+  public getLogLevel(): LogLevel {
+    return this.logLevel;
+  }
+
   public createModuleLogger(moduleName: string): ModuleLogger {
-    return new ModuleLogger(moduleName, this, {
-      consoleMode: this.consoleMode,
-    });
+    return new ModuleLogger(moduleName, this);
   }
 
   private enqueue(operation: () => Promise<void>): Promise<void> {
@@ -71,6 +80,7 @@ export class StandardLogger implements StandardLoggerInterface {
     this.consoleMode = normalizeConsoleLogMode(
       config.OPENTELEMETRY_CONSOLE_LOG_MODE,
     );
+    this.logLevel = normalizeLogLevel(config.OPENTELEMETRY_LOG_LEVEL);
     // Re-initialisation flushes and unregisters the previous provider first.
     if (this.loggerProvider) {
       await this.releaseProvider();

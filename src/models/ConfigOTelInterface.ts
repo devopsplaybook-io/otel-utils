@@ -1,5 +1,7 @@
 export type ConsoleLogMode = "always" | "fallback" | "never";
 
+export type LogLevel = "trace" | "debug" | "info" | "warn" | "error";
+
 export interface ConfigOTelInterface {
   SERVICE_ID: string;
   VERSION: string;
@@ -12,5 +14,6 @@ export interface ConfigOTelInterface {
   OPENTELEMETRY_COLLECTOR_EXPORT_LOGS_MAX_BATCH_SIZE?: number;
   OPENTELEMETRY_COLLECTOR_EXPORT_LOGS_TIMEOUT_MILLIS?: number;
   OPENTELEMETRY_CONSOLE_LOG_MODE?: ConsoleLogMode;
+  OPENTELEMETRY_LOG_LEVEL?: LogLevel;
   OPENTELEMETRY_COLLECT_AUTHORIZATION_HEADER?: string;
 }

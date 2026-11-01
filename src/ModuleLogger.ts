@@ -1,16 +1,24 @@
 import { SeverityNumber } from "@opentelemetry/api";
 import type { Span } from "@opentelemetry/api";
-import type { ConsoleLogMode } from "./models/ConfigOTelInterface";
+import type { ConsoleLogMode, LogLevel } from "./models/ConfigOTelInterface";
 import { StandardLoggerInterface } from "./models/StandardLoggerInterface";
 
 export interface ModuleLoggerOptions {
   consoleMode?: ConsoleLogMode;
 }
 
+const MIN_SEVERITY: Record<LogLevel, SeverityNumber> = {
+  trace: SeverityNumber.TRACE,
+  debug: SeverityNumber.DEBUG,
+  info: SeverityNumber.INFO,
+  warn: SeverityNumber.WARN,
+  error: SeverityNumber.ERROR,
+};
+
 export class ModuleLogger {
   private module: string;
   private standardLogger: StandardLoggerInterface;
-  private consoleMode: ConsoleLogMode;
+  private consoleModeOverride?: ConsoleLogMode;
 
   constructor(
     module: string,
@@ -19,7 +27,15 @@ export class ModuleLogger {
   ) {
     this.module = module;
     this.standardLogger = standardLogger;
-    this.consoleMode = options.consoleMode ?? "always";
+    this.consoleModeOverride = options.consoleMode;
+  }
+
+  public trace(message: string, context?: Span): void {
+    this.display("trace", message, SeverityNumber.TRACE, null, context);
+  }
+
+  public debug(message: string, context?: Span): void {
+    this.display("debug", message, SeverityNumber.DEBUG, null, context);
   }
 
   public info(message: string, context?: Span): void {
@@ -51,6 +67,10 @@ export class ModuleLogger {
     error?: Error | null,
     context?: Span,
   ): void {
+    if (severityNumber < MIN_SEVERITY[this.standardLogger.getLogLevel()]) {
+      return;
+    }
+
     const attributes: Record<string, string> = {
       "log.type": "custom",
       "log.module": this.module,
@@ -71,11 +91,15 @@ export class ModuleLogger {
     }
 
     const logger = this.standardLogger.getLogger();
+    const consoleMode =
+      this.consoleModeOverride ?? this.standardLogger.getConsoleMode();
     const mirrorToConsole =
-      this.consoleMode === "always" ||
-      (this.consoleMode === "fallback" && !logger);
+      consoleMode === "always" || (consoleMode === "fallback" && !logger);
     if (mirrorToConsole) {
-      writeToConsole(level, `[${level}] [${this.module}] ${message}`);
+      writeToConsole(
+        level,
+        this.formatConsoleLine(level, message, error, context),
+      );
     }
     if (!logger) {
       return;
@@ -86,6 +110,26 @@ export class ModuleLogger {
       body: `[${this.module}] ${message}`,
       attributes,
     });
+  }
+
+  private formatConsoleLine(
+    level: string,
+    message: string,
+    error: Error | null | undefined,
+    context?: Span,
+  ): string {
+    let line = `[${level}] [${this.module}] ${message}`;
+    if (error) {
+      line += ` — ${error.name}: ${error.message}`;
+    }
+    if (context) {
+      const spanCtx = context.spanContext();
+      line += ` trace.id=${spanCtx.traceId} span.id=${spanCtx.spanId}`;
+    }
+    if (error?.stack !== undefined) {
+      line += `\n${error.stack}`;
+    }
+    return line;
   }
 }
 
@@ -131,6 +175,8 @@ function writeToConsole(level: string, line: string): void {
     console.error(line);
   } else if (level === "warn") {
     console.warn(line);
+  } else if (level === "debug" || level === "trace") {
+    console.debug(line);
   } else {
     console.log(line);
   }

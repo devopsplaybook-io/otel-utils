@@ -1,7 +1,7 @@
 import { logs, SeverityNumber } from "@opentelemetry/api";
 import { OTLPLogExporter } from "@opentelemetry/exporter-logs-otlp-http";
 import { LoggerProvider } from "@opentelemetry/sdk-logs";
-import type { ConsoleLogMode } from "./models/ConfigOTelInterface";
+import type { ConsoleLogMode, LogLevel } from "./models/ConfigOTelInterface";
 import { ConfigOTelInterface } from "./models/ConfigOTelInterface";
 import { StandardLogger } from "./StandardLogger";
 
@@ -104,6 +104,7 @@ describe("StandardLogger", () => {
   const createdLoggers: StandardLogger[] = [];
   let warnSpy: jest.SpyInstance;
   let logSpy: jest.SpyInstance;
+  let debugSpy: jest.SpyInstance;
 
   function makeLogger(): StandardLogger {
     const logger = new StandardLogger();
@@ -117,6 +118,7 @@ describe("StandardLogger", () => {
     logs.disable();
     warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
     logSpy = jest.spyOn(console, "log").mockImplementation(() => {});
+    debugSpy = jest.spyOn(console, "debug").mockImplementation(() => {});
   });
 
   afterEach(async () => {
@@ -126,6 +128,7 @@ describe("StandardLogger", () => {
     logs.disable();
     warnSpy.mockRestore();
     logSpy.mockRestore();
+    debugSpy.mockRestore();
   });
 
   it("builds the log exporter with the collector URL and no auth header", async () => {
@@ -508,6 +511,58 @@ describe("StandardLogger", () => {
       await logger.shutdown();
     });
 
+    it("honours the configured mode for loggers created before initOTel", async () => {
+      const logger = makeLogger();
+      const moduleLogger = logger.createModuleLogger("billing");
+
+      await logger.initOTel({
+        ...collectorConfig("http://collector/v1/logs"),
+        OPENTELEMETRY_CONSOLE_LOG_MODE: "never",
+      });
+
+      moduleLogger.info("pre-init");
+      expect(logSpy).not.toHaveBeenCalled();
+
+      await logger.shutdown();
+      expect(exportedBodies(exporterAt(0))).toContain("[billing] pre-init");
+    });
+
+    it("fallback mirrors a pre-init logger when no logs endpoint is configured", async () => {
+      const logger = makeLogger();
+      const moduleLogger = logger.createModuleLogger("billing");
+
+      await logger.initOTel({
+        SERVICE_ID: "log-service",
+        VERSION: "1.0.0",
+        OPENTELEMETRY_CONSOLE_LOG_MODE: "fallback",
+      });
+
+      moduleLogger.info("pre-init-fallback");
+      expect(logSpy).toHaveBeenCalledWith("[info] [billing] pre-init-fallback");
+      await logger.shutdown();
+    });
+
+    it("changes the mode of existing loggers on re-initialisation", async () => {
+      const logger = makeLogger();
+      await logger.initOTel({
+        ...collectorConfig("http://collector/v1/logs"),
+        OPENTELEMETRY_CONSOLE_LOG_MODE: "always",
+      });
+      const moduleLogger = logger.createModuleLogger("billing");
+
+      moduleLogger.info("mirrored");
+      expect(logSpy).toHaveBeenCalledWith("[info] [billing] mirrored");
+
+      await logger.initOTel({
+        ...collectorConfig("http://collector/v1/logs"),
+        OPENTELEMETRY_CONSOLE_LOG_MODE: "never",
+      });
+
+      moduleLogger.info("silent");
+      expect(logSpy).not.toHaveBeenCalledWith("[info] [billing] silent");
+      await logger.shutdown();
+    });
+
     it("never suppresses console output while records are still exported", async () => {
       const logger = makeLogger();
       await logger.initOTel({
@@ -560,6 +615,69 @@ describe("StandardLogger", () => {
         "[warn] [billing] mirrored-fallback",
       );
       await withoutEndpoint.shutdown();
+    });
+  });
+
+  describe("log levels", () => {
+    it("drops debug and trace by default from both sinks", async () => {
+      const logger = makeLogger();
+      await logger.initOTel(collectorConfig("http://collector/v1/logs"));
+      const moduleLogger = logger.createModuleLogger("billing");
+
+      moduleLogger.debug("debug-detail");
+      moduleLogger.trace("trace-detail");
+
+      expect(debugSpy).not.toHaveBeenCalled();
+      await logger.shutdown();
+      expect(exportedBodies(exporterAt(0))).not.toContain(
+        "[billing] debug-detail",
+      );
+      expect(exportedBodies(exporterAt(0))).not.toContain(
+        "[billing] trace-detail",
+      );
+    });
+
+    it("lets debug records through when the level allows it", async () => {
+      const logger = makeLogger();
+      await logger.initOTel({
+        ...collectorConfig("http://collector/v1/logs"),
+        OPENTELEMETRY_LOG_LEVEL: "debug",
+      });
+      logger.createModuleLogger("billing").debug("debug-detail");
+
+      expect(debugSpy).toHaveBeenCalledWith("[debug] [billing] debug-detail");
+      await logger.shutdown();
+      expect(exportedBodies(exporterAt(0))).toContain("[billing] debug-detail");
+    });
+
+    it("applies the level to loggers created before initOTel", async () => {
+      const logger = makeLogger();
+      const moduleLogger = logger.createModuleLogger("billing");
+
+      await logger.initOTel({
+        ...collectorConfig("http://collector/v1/logs"),
+        OPENTELEMETRY_LOG_LEVEL: "trace",
+      });
+
+      moduleLogger.trace("trace-detail");
+      expect(debugSpy).toHaveBeenCalledWith("[trace] [billing] trace-detail");
+      await logger.shutdown();
+      expect(exportedBodies(exporterAt(0))).toContain("[billing] trace-detail");
+    });
+
+    it("warns once and behaves as info for an invalid level", async () => {
+      const logger = makeLogger();
+      await logger.initOTel({
+        ...collectorConfig("http://collector/v1/logs"),
+        OPENTELEMETRY_LOG_LEVEL: "verbose" as unknown as LogLevel,
+      });
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("OPENTELEMETRY_LOG_LEVEL"),
+      );
+      logger.createModuleLogger("billing").debug("dropped");
+      expect(debugSpy).not.toHaveBeenCalled();
+      await logger.shutdown();
     });
   });
 });

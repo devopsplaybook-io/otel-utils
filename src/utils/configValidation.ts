@@ -1,6 +1,7 @@
 import type {
   ConfigOTelInterface,
   ConsoleLogMode,
+  LogLevel,
 } from "../models/ConfigOTelInterface";
 
 export function validateServiceIdentity(
@@ -47,4 +48,22 @@ export function normalizeConsoleLogMode(value: unknown): ConsoleLogMode {
     );
   }
   return "always";
+}
+
+export function normalizeLogLevel(value: unknown): LogLevel {
+  if (
+    value === "trace" ||
+    value === "debug" ||
+    value === "info" ||
+    value === "warn" ||
+    value === "error"
+  ) {
+    return value;
+  }
+  if (value !== undefined) {
+    console.warn(
+      `[otel-utils] Invalid OPENTELEMETRY_LOG_LEVEL value "${String(value)}"; expected "trace", "debug", "info", "warn" or "error". Defaulting to "info".`,
+    );
+  }
+  return "info";
 }
