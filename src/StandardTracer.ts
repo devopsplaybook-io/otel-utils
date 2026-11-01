@@ -2,31 +2,39 @@ import {
   context,
   defaultTextMapSetter,
   ROOT_CONTEXT,
-  SpanKind,
   trace,
   Tracer,
 } from "@opentelemetry/api";
-import type { Span as ApiSpan } from "@opentelemetry/api";
+import type { Span as ApiSpan, SpanOptions } from "@opentelemetry/api";
 import { AsyncLocalStorageContextManager } from "@opentelemetry/context-async-hooks";
 import { W3CTraceContextPropagator } from "@opentelemetry/core";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
 import { AWSXRayIdGenerator } from "@opentelemetry/id-generator-aws-xray";
 import {
+  AlwaysOffSampler,
+  AlwaysOnSampler,
   BatchSpanProcessor,
+  ParentBasedSampler,
+  type Sampler,
   type Span,
+  TraceIdRatioBasedSampler,
   TracerProvider,
 } from "@opentelemetry/sdk-trace";
 import {
   ATTR_HTTP_REQUEST_METHOD,
   ATTR_HTTP_ROUTE,
 } from "@opentelemetry/semantic-conventions";
-import { ConfigOTelInterface } from "./models/ConfigOTelInterface";
+import type { ConfigOTelInterface } from "./models/ConfigOTelInterface";
 import {
   normalizeExportIntervalSeconds,
   normalizePositiveInteger,
+  resolveTraceSampler,
   validateServiceIdentity,
 } from "./utils/configValidation";
-import { createOTelResource } from "./utils/createResource";
+import {
+  createOTelResource,
+  resolveResourceOptions,
+} from "./utils/createResource";
 import { buildCollectorExporterOptions } from "./utils/exporterConfig";
 
 let globalTracerProvider: TracerProvider | undefined;
@@ -45,19 +53,50 @@ const ALREADY_REGISTERED_WARNING =
   "[otel-utils] A global tracer provider is already registered; StandardTracer will not replace it. This instance still exports spans through its own provider, but trace.getTracer() keeps using the existing provider.";
 
 /**
- * Options accepted by {@link StandardTracer.startSpan}.
+ * Options accepted by {@link StandardTracer.startSpan}. This is the
+ * OpenTelemetry API `SpanOptions`: `kind`, `attributes`, `links`, `startTime`
+ * and `root`.
+ *
+ * Providing options means the caller describes the span itself: the
+ * parentless default attributes (`http.request.method=BACKEND` and the
+ * synthetic `http.route`) are not added. `links` and `startTime` can only be
+ * set at span creation, not afterwards.
  */
-export interface StandardTracerStartSpanOptions {
-  /**
-   * OpenTelemetry span kind (default `SpanKind.INTERNAL`).
-   *
-   * Providing options means the caller describes the span itself: the
-   * parentless default attributes (`http.request.method=BACKEND` and the
-   * synthetic `http.route`) are not added.
-   */
-  kind?: SpanKind;
+export type StandardTracerStartSpanOptions = SpanOptions;
+
+function buildSampler(config: ConfigOTelInterface): Sampler {
+  const { sampler, ratio } = resolveTraceSampler(
+    config.OPENTELEMETRY_TRACES_SAMPLER,
+    config.OPENTELEMETRY_TRACES_SAMPLER_ARG,
+  );
+  switch (sampler) {
+    case "always_on":
+      return new AlwaysOnSampler();
+    case "always_off":
+      return new AlwaysOffSampler();
+    case "traceidratio":
+      return new TraceIdRatioBasedSampler(ratio);
+    case "parentbased_always_off":
+      return new ParentBasedSampler({ root: new AlwaysOffSampler() });
+    case "parentbased_traceidratio":
+      return new ParentBasedSampler({
+        root: new TraceIdRatioBasedSampler(ratio),
+      });
+    case "parentbased_always_on":
+    default:
+      return new ParentBasedSampler({ root: new AlwaysOnSampler() });
+  }
 }
 
+/**
+ * Creates spans through a `TracerProvider` owned by this instance.
+ *
+ * Single-instance contract: create one `StandardTracer` per process. A second
+ * instance keeps working locally (it exports through its own provider) but
+ * never replaces the global provider registered by the first one.
+ * Re-initialisation is only supported by `StandardLogger`; a `StandardTracer`
+ * is configured once, in its constructor.
+ */
 export class StandardTracer {
   private static readonly SPAN_NAME_SANITIZE_RE = /[^a-zA-Z0-9-_/]/g;
   private static readonly PROPAGATOR = new W3CTraceContextPropagator();
@@ -108,7 +147,12 @@ export class StandardTracer {
     }
     this.traceProvider = new TracerProvider({
       idGenerator: new AWSXRayIdGenerator(),
-      resource: createOTelResource(this.serviceName, this.serviceVersion),
+      sampler: buildSampler(config),
+      resource: createOTelResource(
+        this.serviceName,
+        this.serviceVersion,
+        resolveResourceOptions(config),
+      ),
       spanProcessors,
     });
     // Resolve the tracer from this instance's provider: the global API may be

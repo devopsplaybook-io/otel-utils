@@ -4,11 +4,17 @@ import {
   Meter,
   metrics,
   type MetricOptions,
+  ObservableCounter,
+  type ObservableCallback,
   ObservableGauge,
+  ObservableUpDownCounter,
   UpDownCounter,
 } from "@opentelemetry/api";
 import { OTLPMetricExporter } from "@opentelemetry/exporter-metrics-otlp-http";
-import { createOTelResource } from "./utils/createResource";
+import {
+  createOTelResource,
+  resolveResourceOptions,
+} from "./utils/createResource";
 import {
   MeterProvider,
   PeriodicExportingMetricReader,
@@ -41,6 +47,15 @@ export interface StandardMeterCreateHistogramOptions extends MetricOptions {
   unprefixed?: boolean;
 }
 
+/**
+ * Creates instruments through a `MeterProvider` owned by this instance.
+ *
+ * Single-instance contract: create one `StandardMeter` per process. A second
+ * instance keeps working locally (it records through its own provider) but
+ * never replaces the global provider registered by the first one.
+ * Re-initialisation is only supported by `StandardLogger`; a `StandardMeter`
+ * is configured once, in its constructor.
+ */
 export class StandardMeter {
   private meter: Meter;
   private meterProvider: MeterProvider;
@@ -70,7 +85,11 @@ export class StandardMeter {
           60,
         ) * 1000;
       this.meterProvider = new MeterProvider({
-        resource: createOTelResource(this.serviceName, this.serviceVersion),
+        resource: createOTelResource(
+          this.serviceName,
+          this.serviceVersion,
+          resolveResourceOptions(config),
+        ),
         readers: [
           new PeriodicExportingMetricReader({
             exporter: metricExporter,
@@ -87,7 +106,11 @@ export class StandardMeter {
       });
     } else {
       this.meterProvider = new MeterProvider({
-        resource: createOTelResource(this.serviceName, this.serviceVersion),
+        resource: createOTelResource(
+          this.serviceName,
+          this.serviceVersion,
+          resolveResourceOptions(config),
+        ),
       });
     }
     this.meter = this.meterProvider.getMeter(
@@ -107,6 +130,14 @@ export class StandardMeter {
 
   public forceFlush(): Promise<void> {
     return this.meterProvider.forceFlush();
+  }
+
+  /**
+   * Returns the underlying OTel `Meter` for advanced instruments. Instruments
+   * created through it are not prefixed with the service name.
+   */
+  public getMeter(): Meter {
+    return this.meter;
   }
 
   public createCounter(key: string, options?: MetricOptions): Counter {
@@ -132,6 +163,32 @@ export class StandardMeter {
       unprefixed ? key : `${this.serviceName}.${key}`,
       instrumentOptions,
     );
+  }
+
+  public createObservableCounter(
+    key: string,
+    callback: ObservableCallback,
+    options?: MetricOptions,
+  ): ObservableCounter {
+    const observableCounter = this.meter.createObservableCounter(
+      `${this.serviceName}.${key}`,
+      options,
+    );
+    observableCounter.addCallback(callback);
+    return observableCounter;
+  }
+
+  public createObservableUpDownCounter(
+    key: string,
+    callback: ObservableCallback,
+    options?: MetricOptions,
+  ): ObservableUpDownCounter {
+    const observableUpDownCounter = this.meter.createObservableUpDownCounter(
+      `${this.serviceName}.${key}`,
+      options,
+    );
+    observableUpDownCounter.addCallback(callback);
+    return observableUpDownCounter;
   }
 
   public createObservableGauge(

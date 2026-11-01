@@ -6,6 +6,10 @@ import {
   MeterProvider,
   type MetricData,
 } from "@opentelemetry/sdk-metrics";
+import {
+  ATTR_DEPLOYMENT_ENVIRONMENT_NAME,
+  ATTR_SERVICE_INSTANCE_ID,
+} from "@opentelemetry/semantic-conventions";
 import { ConfigOTelInterface } from "./models/ConfigOTelInterface";
 import { StandardMeter } from "./StandardMeter";
 
@@ -576,6 +580,110 @@ describe("StandardMeter", () => {
       const meter = makeMeter(meterConfig("metric-service"));
 
       await expect(meter.forceFlush()).resolves.toBeUndefined();
+    });
+  });
+
+  describe("observable instruments", () => {
+    it("creates prefixed observable counters and up-down counters with options", async () => {
+      const meter = makeMeter(
+        meterConfig("metric-service", "http://collector/v1/metrics"),
+      );
+
+      meter.createObservableCounter(
+        "queue.processed",
+        (observableResult) => observableResult.observe(12),
+        { description: "Processed jobs", unit: "1" },
+      );
+      meter.createObservableUpDownCounter(
+        "queue.depth",
+        (observableResult) => observableResult.observe(4),
+        { description: "Queue depth", unit: "{item}" },
+      );
+
+      await meter.shutdown();
+
+      const exporter = lastExporter();
+      const names = metricNames(exporter);
+      expect(names).toContain("metric-service.queue.processed");
+      expect(names).toContain("metric-service.queue.depth");
+
+      const counter = metricData(exporter, "metric-service.queue.processed");
+      expect(counter?.descriptor.description).toBe("Processed jobs");
+      expect(counter?.descriptor.unit).toBe("1");
+      if (!counter || counter.dataPointType !== DataPointType.SUM) {
+        throw new Error("expected a sum metric");
+      }
+      expect(counter.dataPoints[0].value).toBe(12);
+
+      const upDownCounter = metricData(exporter, "metric-service.queue.depth");
+      expect(upDownCounter?.descriptor.description).toBe("Queue depth");
+      if (!upDownCounter || upDownCounter.dataPointType !== DataPointType.SUM) {
+        throw new Error("expected a sum metric");
+      }
+      expect(upDownCounter.dataPoints[0].value).toBe(4);
+    });
+
+    it("exposes the raw meter through getMeter() without the service prefix", async () => {
+      const meter = makeMeter(
+        meterConfig("metric-service", "http://collector/v1/metrics"),
+      );
+
+      const rawMeter = meter.getMeter();
+      expect(rawMeter).toBeDefined();
+      rawMeter.createCounter("raw.counter").add(2);
+      meter.createCounter("prefixed.counter").add(1);
+
+      await meter.shutdown();
+
+      const names = metricNames(lastExporter());
+      expect(names).toContain("raw.counter");
+      expect(names).toContain("metric-service.prefixed.counter");
+      expect(names).not.toContain("metric-service.raw.counter");
+    });
+  });
+
+  describe("resource identity", () => {
+    it("adds the instance, environment and custom attributes to the exported resource", async () => {
+      const meter = makeMeter({
+        ...meterConfig("metric-service", "http://collector/v1/metrics"),
+        SERVICE_INSTANCE_ID: "pod-7",
+        DEPLOYMENT_ENVIRONMENT_NAME: "production",
+        OPENTELEMETRY_RESOURCE_ATTRIBUTES: { "deployment.tier": "web" },
+      });
+
+      meter.createCounter("requests.total").add(1);
+      await meter.shutdown();
+
+      const [resourceMetrics] = lastExporter().getMetrics();
+      expect(
+        resourceMetrics.resource.attributes[ATTR_SERVICE_INSTANCE_ID],
+      ).toBe("pod-7");
+      expect(
+        resourceMetrics.resource.attributes[ATTR_DEPLOYMENT_ENVIRONMENT_NAME],
+      ).toBe("production");
+      expect(resourceMetrics.resource.attributes["deployment.tier"]).toBe(
+        "web",
+      );
+    });
+
+    it("keeps the default resource attributes when the new fields are unset", async () => {
+      const meter = makeMeter(
+        meterConfig("plain-service", "http://collector/v1/metrics"),
+      );
+
+      meter.createCounter("requests.total").add(1);
+      await meter.shutdown();
+
+      const [resourceMetrics] = lastExporter().getMetrics();
+      expect(resourceMetrics.resource.attributes["service.name"]).toBe(
+        "plain-service",
+      );
+      expect(
+        resourceMetrics.resource.attributes[ATTR_SERVICE_INSTANCE_ID],
+      ).toBeUndefined();
+      expect(
+        resourceMetrics.resource.attributes[ATTR_DEPLOYMENT_ENVIRONMENT_NAME],
+      ).toBeUndefined();
     });
   });
 

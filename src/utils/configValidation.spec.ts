@@ -5,8 +5,11 @@ import {
   normalizeExportIntervalSeconds,
   normalizeHeaders,
   normalizeLogLevel,
+  normalizeOptionalIdentityValue,
   normalizePositiveInteger,
+  normalizeResourceAttributes,
   resolveMetricExportTimeout,
+  resolveTraceSampler,
   validateCollectorUrl,
   validateServiceIdentity,
 } from "./configValidation";
@@ -254,6 +257,150 @@ describe("configValidation", () => {
       expect(warnSpy).toHaveBeenCalledTimes(1);
       expect(warnSpy).toHaveBeenCalledWith(
         expect.stringContaining("clamping the export timeout to 5000 ms"),
+      );
+    });
+  });
+
+  describe("resolveTraceSampler", () => {
+    it("defaults to parentbased_always_on without warning", () => {
+      expect(resolveTraceSampler(undefined, undefined)).toEqual({
+        sampler: "parentbased_always_on",
+        ratio: 1,
+      });
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+
+    it("treats a blank sampler as unset", () => {
+      expect(resolveTraceSampler("   ", undefined)).toEqual({
+        sampler: "parentbased_always_on",
+        ratio: 1,
+      });
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      "always_on",
+      "always_off",
+      "traceidratio",
+      "parentbased_always_on",
+      "parentbased_always_off",
+      "parentbased_traceidratio",
+    ] as const)("accepts the %p sampler", (sampler) => {
+      expect(resolveTraceSampler(sampler, 0.5)).toEqual({
+        sampler,
+        ratio: sampler.includes("traceidratio") ? 0.5 : 1,
+      });
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+
+    it("warns once and falls back to parentbased_always_on for an invalid sampler", () => {
+      expect(resolveTraceSampler("sometimes", undefined)).toEqual({
+        sampler: "parentbased_always_on",
+        ratio: 1,
+      });
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("OPENTELEMETRY_TRACES_SAMPLER"),
+      );
+    });
+
+    it.each(["traceidratio", "parentbased_traceidratio"] as const)(
+      "accepts the 0 and 1 ratio boundaries for %p",
+      (sampler) => {
+        expect(resolveTraceSampler(sampler, 0).ratio).toBe(0);
+        expect(resolveTraceSampler(sampler, 1).ratio).toBe(1);
+        expect(warnSpy).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each(["traceidratio", "parentbased_traceidratio"] as const)(
+      "warns once and defaults the ratio to 1 when it is missing for %p",
+      (sampler) => {
+        expect(resolveTraceSampler(sampler, undefined).ratio).toBe(1);
+        expect(warnSpy).toHaveBeenCalledTimes(1);
+        expect(warnSpy).toHaveBeenCalledWith(
+          expect.stringContaining("OPENTELEMETRY_TRACES_SAMPLER_ARG"),
+        );
+      },
+    );
+
+    it.each([-0.1, 1.1, NaN, Infinity, "0.5"])(
+      "warns once and defaults the ratio to 1 for the invalid value %p",
+      (ratio) => {
+        expect(resolveTraceSampler("traceidratio", ratio).ratio).toBe(1);
+        expect(warnSpy).toHaveBeenCalledTimes(1);
+        expect(warnSpy).toHaveBeenCalledWith(
+          expect.stringContaining("OPENTELEMETRY_TRACES_SAMPLER_ARG"),
+        );
+      },
+    );
+
+    it("ignores the ratio for non-ratio samplers without warning", () => {
+      expect(resolveTraceSampler("always_on", 5)).toEqual({
+        sampler: "always_on",
+        ratio: 1,
+      });
+      expect(resolveTraceSampler("parentbased_always_off", "nope")).toEqual({
+        sampler: "parentbased_always_off",
+        ratio: 1,
+      });
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("normalizeResourceAttributes", () => {
+    it("returns an empty object when undefined", () => {
+      expect(normalizeResourceAttributes(undefined)).toEqual({});
+    });
+
+    it("returns a shallow copy of a valid attribute map", () => {
+      const input = { "deployment.tier": "web", replicas: 2, canary: true };
+      const result = normalizeResourceAttributes(input);
+      expect(result).toEqual(input);
+      expect(result).not.toBe(input);
+    });
+
+    it("rejects non-object containers", () => {
+      for (const invalid of [null, "attrs", 42, ["a"]]) {
+        expect(() => normalizeResourceAttributes(invalid)).toThrow(
+          "[otel-utils] OPENTELEMETRY_RESOURCE_ATTRIBUTES must be an object mapping attribute names to string, number or boolean values",
+        );
+      }
+    });
+
+    it.each([{ nested: {} }, NaN, Infinity, null])(
+      "rejects the invalid value %p naming the key",
+      (invalidValue) => {
+        expect(() =>
+          normalizeResourceAttributes({ region: invalidValue }),
+        ).toThrow(
+          '[otel-utils] OPENTELEMETRY_RESOURCE_ATTRIBUTES["region"] must be a string, number or boolean',
+        );
+      },
+    );
+  });
+
+  describe("normalizeOptionalIdentityValue", () => {
+    it("returns undefined when unset or blank", () => {
+      expect(
+        normalizeOptionalIdentityValue(undefined, "SERVICE_INSTANCE_ID"),
+      ).toBeUndefined();
+      expect(
+        normalizeOptionalIdentityValue("   ", "SERVICE_INSTANCE_ID"),
+      ).toBeUndefined();
+    });
+
+    it("passes a non-empty string through", () => {
+      expect(
+        normalizeOptionalIdentityValue("pod-1", "SERVICE_INSTANCE_ID"),
+      ).toBe("pod-1");
+    });
+
+    it("throws for a non-string value naming the variable", () => {
+      expect(() =>
+        normalizeOptionalIdentityValue(42, "DEPLOYMENT_ENVIRONMENT_NAME"),
+      ).toThrow(
+        "[otel-utils] DEPLOYMENT_ENVIRONMENT_NAME must be a string when set",
       );
     });
   });

@@ -4,9 +4,24 @@ export type LogLevel = "trace" | "debug" | "info" | "warn" | "error";
 
 export type Compression = "gzip" | "none";
 
+export type TraceSampler =
+  | "always_on"
+  | "always_off"
+  | "traceidratio"
+  | "parentbased_always_on"
+  | "parentbased_always_off"
+  | "parentbased_traceidratio";
+
+export type ResourceAttributeValue = string | number | boolean;
+
 export interface ConfigOTelInterface {
   SERVICE_ID: string;
   VERSION: string;
+  SERVICE_INSTANCE_ID?: string;
+  DEPLOYMENT_ENVIRONMENT_NAME?: string;
+  OPENTELEMETRY_RESOURCE_ATTRIBUTES?: Record<string, ResourceAttributeValue>;
+  OPENTELEMETRY_TRACES_SAMPLER?: TraceSampler;
+  OPENTELEMETRY_TRACES_SAMPLER_ARG?: number;
   OPENTELEMETRY_COLLECTOR_HTTP_TRACES?: string;
   OPENTELEMETRY_COLLECTOR_HTTP_METRICS?: string;
   OPENTELEMETRY_COLLECTOR_HTTP_LOGS?: string;

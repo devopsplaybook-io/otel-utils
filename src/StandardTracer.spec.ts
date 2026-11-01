@@ -9,10 +9,15 @@ import {
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
 import { TracerProvider } from "@opentelemetry/sdk-trace";
 import {
+  ATTR_DEPLOYMENT_ENVIRONMENT_NAME,
   ATTR_HTTP_REQUEST_METHOD,
   ATTR_HTTP_ROUTE,
+  ATTR_SERVICE_INSTANCE_ID,
 } from "@opentelemetry/semantic-conventions";
-import { ConfigOTelInterface } from "./models/ConfigOTelInterface";
+import type {
+  ConfigOTelInterface,
+  TraceSampler,
+} from "./models/ConfigOTelInterface";
 import { StandardTracer } from "./StandardTracer";
 
 jest.mock("@opentelemetry/exporter-trace-otlp-http", () => {
@@ -51,20 +56,48 @@ jest.mock("@opentelemetry/sdk-trace", () => {
       batchProcessorOptions.push(options);
     }
   }
+  const tracerProviderOptions: unknown[] = [];
+  class RecordingTracerProvider extends actual.TracerProvider {
+    constructor(
+      options: ConstructorParameters<typeof actual.TracerProvider>[0],
+    ) {
+      super(options);
+      tracerProviderOptions.push(options);
+    }
+  }
   return {
     ...actual,
     BatchSpanProcessor: RecordingBatchSpanProcessor,
+    TracerProvider: RecordingTracerProvider,
     __batchProcessorOptions: batchProcessorOptions,
+    __tracerProviderOptions: tracerProviderOptions,
   };
 });
 
 interface SdkTraceMock {
   __batchProcessorOptions: unknown[];
+  __tracerProviderOptions: unknown[];
 }
 
 function batchProcessorOptions(): unknown[] {
   return (jest.requireMock("@opentelemetry/sdk-trace") as SdkTraceMock)
     .__batchProcessorOptions;
+}
+
+function tracerProviderOptions(): unknown[] {
+  return (jest.requireMock("@opentelemetry/sdk-trace") as SdkTraceMock)
+    .__tracerProviderOptions;
+}
+
+interface RecordedTracerProviderOptions {
+  sampler: { toString(): string };
+}
+
+function lastSampler(): string {
+  const options = tracerProviderOptions();
+  return (
+    options[options.length - 1] as RecordedTracerProviderOptions
+  ).sampler.toString();
 }
 
 interface ExportedSpan {
@@ -123,6 +156,7 @@ describe("StandardTracer", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     batchProcessorOptions().length = 0;
+    tracerProviderOptions().length = 0;
     trace.disable();
     warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
   });
@@ -553,6 +587,178 @@ describe("StandardTracer", () => {
 
       expect(errors).toEqual([]);
       expect(warnSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it("documents the single-instance contract: a second instance never replaces the global provider", async () => {
+      const first = makeTracer(
+        tracerConfig("svc-1", "http://collector-1/v1/traces"),
+      );
+      const firstProvider = registeredTracerProvider();
+
+      const second = makeTracer(
+        tracerConfig("svc-2", "http://collector-2/v1/traces"),
+      );
+
+      expect(registeredTracerProvider()).toBe(firstProvider);
+      await second.shutdown();
+      expect(registeredTracerProvider()).toBe(firstProvider);
+      await first.shutdown();
+    });
+  });
+
+  describe("trace sampling", () => {
+    it.each([
+      ["always_on", undefined, /^AlwaysOnSampler$/],
+      ["always_off", undefined, /^AlwaysOffSampler$/],
+      ["traceidratio", 0.5, /^TraceIdRatioBased\{0\.5\}$/],
+      [
+        "parentbased_always_on",
+        undefined,
+        /^ParentBased\{root=AlwaysOnSampler/,
+      ],
+      [
+        "parentbased_always_off",
+        undefined,
+        /^ParentBased\{root=AlwaysOffSampler/,
+      ],
+      [
+        "parentbased_traceidratio",
+        0.25,
+        /^ParentBased\{root=TraceIdRatioBased\{0\.25\}/,
+      ],
+    ] as const)(
+      "maps the %p sampler to the SDK sampler",
+      (sampler, ratio, expected) => {
+        makeTracer({
+          ...tracerConfig("sampler-service"),
+          OPENTELEMETRY_TRACES_SAMPLER: sampler as TraceSampler,
+          OPENTELEMETRY_TRACES_SAMPLER_ARG: ratio,
+        });
+
+        expect(lastSampler()).toMatch(expected);
+        expect(warnSpy).not.toHaveBeenCalled();
+      },
+    );
+
+    it("defaults to parentbased_always_on without warning", () => {
+      makeTracer(tracerConfig("sampler-service"));
+
+      expect(lastSampler()).toMatch(/^ParentBased\{root=AlwaysOnSampler/);
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+
+    it("warns once and falls back to parentbased_always_on for an invalid sampler", () => {
+      makeTracer({
+        ...tracerConfig("sampler-service"),
+        OPENTELEMETRY_TRACES_SAMPLER: "sometimes" as TraceSampler,
+      });
+
+      expect(lastSampler()).toMatch(/^ParentBased\{root=AlwaysOnSampler/);
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("OPENTELEMETRY_TRACES_SAMPLER"),
+      );
+    });
+
+    it("drops spans with always_off and exports them with the default sampler", async () => {
+      const offTracer = makeTracer({
+        ...tracerConfig("off-service", "http://collector-off/v1/traces"),
+        OPENTELEMETRY_TRACES_SAMPLER: "always_off",
+      });
+      const droppedSpan = offTracer.startSpan("dropped");
+      expect(droppedSpan.isRecording()).toBe(false);
+      droppedSpan.end();
+      await offTracer.shutdown();
+      expect(spanNames(exporterAt(0))).toEqual([]);
+
+      const defaultTracer = makeTracer(
+        tracerConfig("on-service", "http://collector-on/v1/traces"),
+      );
+      const keptSpan = defaultTracer.startSpan("kept");
+      expect(keptSpan.isRecording()).toBe(true);
+      keptSpan.end();
+      await defaultTracer.shutdown();
+      expect(spanNames(exporterAt(1))).toEqual(["kept"]);
+    });
+  });
+
+  describe("span options", () => {
+    it("accepts attributes, links and start time at creation without synthetic attributes", () => {
+      const tracer = makeTracer(tracerConfig("test-service"));
+      const linkedSpan = trace.wrapSpanContext({
+        traceId: "0af7651916cd43dd8448eb211c80319c",
+        spanId: "b7ad6b7169203331",
+        traceFlags: TraceFlags.SAMPLED,
+      });
+      const startTime = new Date(Date.now() - 5000);
+
+      const span = tracer.startSpan("described-operation", undefined, {
+        kind: SpanKind.CLIENT,
+        attributes: { "custom.attr": "value", "custom.count": 3 },
+        links: [
+          {
+            context: linkedSpan.spanContext(),
+            attributes: { "link.type": "retry" },
+          },
+        ],
+        startTime,
+      });
+
+      expect(span.kind).toBe(SpanKind.CLIENT);
+      expect(span.attributes["custom.attr"]).toBe("value");
+      expect(span.attributes["custom.count"]).toBe(3);
+      expect(span.links).toHaveLength(1);
+      expect(span.links[0].context.spanId).toBe("b7ad6b7169203331");
+      expect(span.links[0].attributes?.["link.type"]).toBe("retry");
+      expect(span.startTime[0]).toBe(Math.floor(startTime.getTime() / 1000));
+      span.setAttribute("post.creation", true);
+      expect(span.attributes["post.creation"]).toBe(true);
+      expect(span.attributes[ATTR_HTTP_REQUEST_METHOD]).toBeUndefined();
+      expect(span.attributes[ATTR_HTTP_ROUTE]).toBeUndefined();
+      span.end();
+    });
+  });
+
+  describe("resource identity", () => {
+    it("adds the instance, environment and custom attributes to exported spans", async () => {
+      const tracer = makeTracer({
+        ...tracerConfig("resource-service", "http://collector/v1/traces"),
+        SERVICE_INSTANCE_ID: "pod-7",
+        DEPLOYMENT_ENVIRONMENT_NAME: "production",
+        OPENTELEMETRY_RESOURCE_ATTRIBUTES: {
+          "deployment.tier": "web",
+          replicas: 3,
+        },
+      });
+
+      tracer.startSpan("with-resource").end();
+      await tracer.shutdown();
+
+      const [span] = exporterAt(0).getExportedSpans();
+      expect(span.resource.attributes[ATTR_SERVICE_INSTANCE_ID]).toBe("pod-7");
+      expect(span.resource.attributes[ATTR_DEPLOYMENT_ENVIRONMENT_NAME]).toBe(
+        "production",
+      );
+      expect(span.resource.attributes["deployment.tier"]).toBe("web");
+      expect(span.resource.attributes.replicas).toBe(3);
+    });
+
+    it("keeps the default resource attributes when the new fields are unset", async () => {
+      const tracer = makeTracer(
+        tracerConfig("plain-service", "http://collector/v1/traces"),
+      );
+
+      tracer.startSpan("plain-span").end();
+      await tracer.shutdown();
+
+      const [span] = exporterAt(0).getExportedSpans();
+      expect(span.resource.attributes["service.name"]).toBe("plain-service");
+      expect(
+        span.resource.attributes[ATTR_SERVICE_INSTANCE_ID],
+      ).toBeUndefined();
+      expect(
+        span.resource.attributes[ATTR_DEPLOYMENT_ENVIRONMENT_NAME],
+      ).toBeUndefined();
     });
   });
 });

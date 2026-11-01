@@ -9,7 +9,10 @@ import type {
   ConsoleLogMode,
   LogLevel,
 } from "./models/ConfigOTelInterface";
-import { createOTelResource } from "./utils/createResource";
+import {
+  createOTelResource,
+  resolveResourceOptions,
+} from "./utils/createResource";
 import {
   normalizeConsoleLogMode,
   normalizeExportIntervalSeconds,
@@ -78,6 +81,13 @@ export class StandardLogger implements StandardLoggerInterface {
     // Validate before releasing the previous provider: a bad re-init must keep
     // the working provider in place.
     validateServiceIdentity(config);
+    const serviceName = config.SERVICE_ID;
+    const serviceVersion = config.VERSION;
+    const resource = createOTelResource(
+      serviceName,
+      serviceVersion,
+      resolveResourceOptions(config),
+    );
     this.consoleMode = normalizeConsoleLogMode(
       config.OPENTELEMETRY_CONSOLE_LOG_MODE,
     );
@@ -95,8 +105,8 @@ export class StandardLogger implements StandardLoggerInterface {
     if (this.loggerProvider) {
       await this.releaseProvider();
     }
-    this.serviceName = config.SERVICE_ID;
-    this.serviceVersion = config.VERSION;
+    this.serviceName = serviceName;
+    this.serviceVersion = serviceVersion;
 
     if (!exporterOptions) {
       return;
@@ -127,7 +137,7 @@ export class StandardLogger implements StandardLoggerInterface {
             ) * 1000,
         }),
       ],
-      resource: createOTelResource(this.serviceName, this.serviceVersion),
+      resource,
     });
 
     this.logger = this.loggerProvider.getLogger(
