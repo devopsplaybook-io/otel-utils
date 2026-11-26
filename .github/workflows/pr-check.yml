@@ -17,10 +17,10 @@ permissions:
 
 jobs:
   npm-pr:
-    # Pinned to common-utils main commit 6353cedf6d3527bbadbef8fa3da68031dcfe131f (2026-11-06):
+    # Pinned to common-utils main commit 7cdda8f6000fab3c2597d14ab5c65c02790079e7 (2026-11-26):
     # common-utils publishes no tags/releases. Bump this SHA deliberately after
     # reviewing common-utils changes.
-    uses: devopsplaybook-io/common-utils/.github/workflows/reusable-npm-pr.yml@6353cedf6d3527bbadbef8fa3da68031dcfe131f
+    uses: devopsplaybook-io/common-utils/.github/workflows/reusable-npm-pr.yml@7cdda8f6000fab3c2597d14ab5c65c02790079e7
     with:
       npm_package_name: "@devopsplaybook.io/otel-utils"
       node_version: "22"
